@@ -547,6 +547,15 @@
 <script>
     // Aplicativo instalável (PWA): só funciona quando o jogo é aberto por um site (https), não com dois cliques no arquivo.
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+        // Quando chega uma versão nova do jogo, recarrega uma vez para a tela e o app.js serem da mesma versão.
+        // (O jogo é salvo antes de sair da página, então nada se perde.)
+        const jaTinhaVersao = !!navigator.serviceWorker.controller;
+        let recarregou = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!jaTinhaVersao || recarregou) return;
+            recarregou = true;
+            location.reload();
+        });
         navigator.serviceWorker.register('sw.js').catch(() => {});
     }
 </script>
