@@ -1003,7 +1003,7 @@ function alvoFelicidade() {
     const parteVida = h.liquido > 0 ? h.custoBase / h.liquido : 1;
     const partes = {
         parteVida,
-        padrao: Math.min(75, 15 + parteVida * 85),
+        padrao: Math.min(75, 25 + parteVida * 75),
         casa: moradiaAtual() ? FELICIDADE_CASA_PROPRIA : 0,
         carro: estado.bens.some(b => b.tipo === 'carro') ? FELICIDADE_CARRO : 0,
         vermelho: estado.caixa < -0.005 ? FELICIDADE_NO_VERMELHO : 0
@@ -1014,7 +1014,8 @@ function alvoFelicidade() {
 
 function atualizarFelicidadeDoMes() {
     const antes = estado.felicidade;
-    mudarFelicidade((alvoFelicidade().alvo - antes) * FELICIDADE_RITMO);
+    const dif = alvoFelicidade().alvo - antes;
+    mudarFelicidade(dif * (dif < 0 ? FELICIDADE_RITMO_CAINDO : FELICIDADE_RITMO_SUBINDO));
     estado.padraoMes = estado.padraoVida;
     estado.bonusPadraoMes = 0;
     if (antes >= 35 && estado.felicidade < 35) {

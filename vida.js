@@ -163,7 +163,8 @@ const IMPREVISTOS = [
 // Todo mês a felicidade anda um pouco em direção a um "alvo", que depende de quanto do salário você
 // se permite gastar vivendo. Alegrias de compras e mudanças de vida passam com o tempo (adaptação hedônica).
 const FELICIDADE_INICIAL = 70;
-const FELICIDADE_RITMO = 0.10;        // a cada mês, anda 10% da distância até o alvo
+const FELICIDADE_RITMO_CAINDO = 0.03; // a cada mês, cai 3% da distância até o alvo (leva uns 2 anos para cair metade)
+const FELICIDADE_RITMO_SUBINDO = 0.08; // e sobe 8% quando o alvo está acima
 const FELICIDADE_SUBIR_PADRAO = 10;   // por nível de padrão de vida que você sobe
 const FELICIDADE_DESCER_PADRAO = 6;   // por nível que você desce
 const FELICIDADE_BEM_MAX = 25;        // alegria máxima de uma compra
