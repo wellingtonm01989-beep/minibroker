@@ -172,6 +172,13 @@ const FELICIDADE_BEM_FATOR = 40;      // alegria = 40 × (preço do bem ÷ seu p
 const FELICIDADE_CASA_PROPRIA = 8;    // morar no que é seu deixa o alvo mais alto
 const FELICIDADE_CARRO = 4;
 const FELICIDADE_NO_VERMELHO = -12;   // dívida no cheque especial tira o sono
+// Investir também alegra (ver o futuro sendo construído), mas não substitui viver:
+// investir meio salário líquido dá +1, no máximo +1 por investimento e +3 por mês,
+// e essa alegria não passa de 20 pontos acima do alvo.
+const FELICIDADE_INVESTIR_FATOR = 2;
+const FELICIDADE_INVESTIR_MAX = 1;
+const FELICIDADE_INVESTIR_MES = 3;
+const FELICIDADE_INVESTIR_ACIMA_ALVO = 20;
 // Felicidade baixa: imprevistos até 2,5 vezes mais frequentes e problemas de saúde até 3 vezes mais prováveis entre eles.
 const IMPREVISTO_MULT_TRISTE = 2.5;
 const IMPREVISTO_MULT_FELIZ = 0.6;

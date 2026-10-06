@@ -722,9 +722,10 @@ function comprarAcao(id, qtd) {
     estado.acoes[id] = pos;
     estado.caixa -= custo;
     registrar(`Compra de ${qtd} ${id} a ${fmtBRL(preco(id))}`, -custo);
-    mostrarToast(ATIVOS[id].tipo === 'acao'
+    const textoAlegria = alegriaDoInvestimento(custo);
+    mostrarToast((ATIVOS[id].tipo === 'acao'
         ? `Você comprou <b>${qtd} ${id}</b> por ${fmtBRL(custo)}. Agora você é sócio da ${ATIVOS[id].nome}!`
-        : `Você comprou <b>${qtd} cotas de ${id}</b> por ${fmtBRL(custo)}.`, 'ok');
+        : `Você comprou <b>${qtd} cotas de ${id}</b> por ${fmtBRL(custo)}.`) + textoAlegria, 'ok');
     concluirOperacao();
 }
 
@@ -773,7 +774,7 @@ function aplicar(id, valor) {
     estado.lotes.push(lote);
     estado.caixa -= valor;
     registrar(`Aplicação em ${a.nome}`, -valor);
-    mostrarToast(`Você aplicou <b>${fmtBRL(valor)}</b> em ${a.nome}. Agora é só esperar o tempo passar!`, 'ok');
+    mostrarToast(`Você aplicou <b>${fmtBRL(valor)}</b> em ${a.nome}. Agora é só esperar o tempo passar!` + alegriaDoInvestimento(valor), 'ok');
     concluirOperacao();
 }
 
@@ -1018,9 +1019,29 @@ function atualizarFelicidadeDoMes() {
     mudarFelicidade(dif * (dif < 0 ? FELICIDADE_RITMO_CAINDO : FELICIDADE_RITMO_SUBINDO));
     estado.padraoMes = estado.padraoVida;
     estado.bonusPadraoMes = 0;
+    estado.alegriaInvestMes = 0;
     if (antes >= 35 && estado.felicidade < 35) {
         registrar('Sua felicidade está baixa: só trabalhar e guardar cansa. Imprevistos e problemas de saúde ficam mais frequentes. Que tal aproveitar um pouco mais o seu salário?', 0);
     }
+}
+
+// Cada investimento dá um pouco de alegria, proporcional ao valor perto do salário líquido.
+// Devolve o texto para o aviso da operação (vazio quando não mudou nada).
+function alegriaDoInvestimento(valor) {
+    const base = Math.max(holerite().liquido, estado.salarioMinimo);
+    const teto = alvoFelicidade().alvo + FELICIDADE_INVESTIR_ACIMA_ALVO;
+    const pedido = Math.min(FELICIDADE_INVESTIR_FATOR * valor / base, FELICIDADE_INVESTIR_MAX);
+    const sobraMes = FELICIDADE_INVESTIR_MES - estado.alegriaInvestMes;
+    const ganho = Math.min(pedido, sobraMes, teto - estado.felicidade);
+    if (ganho < 0.05) {
+        if (pedido < 0.05) return '';
+        return sobraMes < 0.05
+            ? '<br>Você já ganhou toda a alegria de investir deste mês.'
+            : '<br>Investir já não aumenta sua felicidade: falta aproveitar um pouco a vida.';
+    }
+    estado.alegriaInvestMes += ganho;
+    mudarFelicidade(ganho);
+    return ` Felicidade <b class="sobe">+${ganho.toFixed(1).replace('.', ',')}</b>.`;
 }
 
 // Comprar um bem dá alegria proporcional ao tamanho da compra perto de tudo o que você tem.
@@ -2766,9 +2787,10 @@ function htmlVida() {
             ${fel.casa ? linha('Morar na casa própria', pontos(fel.casa), 'sobe') : ''}
             ${fel.carro ? linha('Ter carro', pontos(fel.carro), 'sobe') : ''}
             ${fel.vermelho ? linha('Dívida no vermelho', pontos(fel.vermelho), 'desce') : ''}
+            ${linha('Alegria de investir neste mês', `+${estado.alegriaInvestMes.toFixed(1).replace('.', ',')} de ${FELICIDADE_INVESTIR_MES}`, estado.alegriaInvestMes > 0.05 ? 'sobe' : '')}
             ${linha('Chance de imprevistos', mult > 1.05 ? `${fmtNum(mult)}× maior` : mult < 0.95 ? `${fmtNum(1 / mult)}× menor` : 'normal', mult > 1.05 ? 'desce' : mult < 0.95 ? 'sobe' : '')}
             ${estado.felicidade < 50 ? '<p class="desce"><b>Com a felicidade baixa, problemas de saúde (até cirurgias) e crises de estresse ficam mais prováveis.</b></p>' : ''}
-            <p class="dica">Todo mês a felicidade anda um pouco em direção ao alvo. Quem só trabalha e guarda tudo vai ficando triste. Subir o padrão de vida dá +${FELICIDADE_SUBIR_PADRAO} na hora (descer tira ${FELICIDADE_DESCER_PADRAO}), e comprar um bem dá alegria conforme o tamanho da compra perto do seu patrimônio. Mas a alegria passa: aos poucos você se acostuma e ela volta para o alvo. O segredo é equilibrar aproveitar hoje e investir para o futuro.</p>
+            <p class="dica">Todo mês a felicidade anda um pouco em direção ao alvo. Quem só trabalha e guarda tudo vai ficando triste. Subir o padrão de vida dá +${FELICIDADE_SUBIR_PADRAO} na hora (descer tira ${FELICIDADE_DESCER_PADRAO}), comprar um bem dá alegria conforme o tamanho da compra perto do seu patrimônio, e cada investimento também alegra um pouco (até +${FELICIDADE_INVESTIR_MES} por mês, e no máximo ${FELICIDADE_INVESTIR_ACIMA_ALVO} pontos acima do alvo: investir é bom, mas não substitui viver). Mas a alegria passa: aos poucos você se acostuma e ela volta para o alvo. O segredo é equilibrar aproveitar hoje e investir para o futuro.</p>
         </div>`;
 
     const renda = rendaPassivaMensal();
@@ -2901,7 +2923,7 @@ function completarEstado() {
     const padrao = {
         proventos: 0, efeitos: [], noticias: [], naoLidas: 0, usados: [],
         ajusteSelic: 0, ajusteIpca: 0, baseSelic: null, baseIpca: null, rumores: [], proximoCopom: 0, governo: null, premioFiscal: 0, pesquisa: 0, tendenciaEleitoral: 0, campanha: false, anoEleicao: 0, proximaEleicao: 0, mercadoFechado: null, sombra: {}, antesCrise: {}, fund: {}, proximaNoticia: estado.dia + 3,
-        felicidade: FELICIDADE_INICIAL, bonusPadraoMes: 0,
+        felicidade: FELICIDADE_INICIAL, bonusPadraoMes: 0, alegriaInvestMes: 0,
         carreira: null, padraoVida: 0, salarioMinimo: SALARIO_MINIMO_INICIAL, indicePrecos: 1, fatorIR: 1, rolagem: {},
         bens: [], proximoBem: 1, indiceImoveis: 1, anoIPVA: 0,
         empresas: [], proximoEmp: 1, ofertasEmpresas: null, conjuntura: 0,
