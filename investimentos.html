@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MiniBroker</title>
+<meta name="description" content="Simulador de investimentos: dinheiro de mentira, mercado de verdade.">
+<meta name="theme-color" content="#131722">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icones/favicon-32.png">
+<link rel="apple-touch-icon" href="icones/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="MiniBroker">
 <style>
     :root {
         --fundo: #0b0e14;
@@ -432,5 +441,11 @@
 <script src="noticias.js"></script>
 <script src="vida.js"></script>
 <script src="app.js"></script>
+<script>
+    // Aplicativo instalável (PWA): só funciona quando o jogo é aberto por um site (https), não com dois cliques no arquivo.
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+</script>
 </body>
 </html>
