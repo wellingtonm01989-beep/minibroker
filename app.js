@@ -4,7 +4,7 @@ const DIAS_MES = 21;
 const MAX_HISTORICO = 504;
 const MAX_PATRIMONIO = 2520;
 const CHAVE_SALVO = 'minibroker-v3';
-const SEGUNDOS_POR_DIA = 5; // segundos reais para passar 1 dia útil no jogo, na velocidade 1x
+const SEGUNDOS_POR_DIA = 60; // segundos reais para passar 1 dia útil no jogo, na velocidade 1x
 const INTERVALO_COPOM = 63; // dias úteis entre as reuniões do Copom (uma a cada 3 meses)
 const META_INFLACAO = 0.03;
 const JURO_REAL_NEUTRO = 0.05; // juro acima da inflação que nem esquenta nem esfria a economia
@@ -441,7 +441,7 @@ function avancar(dias) {
 }
 
 /* ---------- Relógio em tempo real ---------- */
-// estado.velocidade: 0 = pausado, 1, 2 ou 3 = quantas vezes mais rápido que o normal (1 dia útil a cada 5 s).
+// estado.velocidade: 0 = pausado, 1, 2, 3 ou 4 = quantas vezes mais rápido que o normal (1 dia útil a cada 1 minuto).
 const segundosPorDia = () => SEGUNDOS_POR_DIA / estado.velocidade;
 
 // O tempo só anda com o jogo aberto e na tela. Um salto de mais de 10 segundos significa
@@ -2316,7 +2316,7 @@ function htmlCarteira() {
         }
     }
     if (!linhas.length) {
-        return `<p class="vazio">Você ainda não investiu. Escolha um ativo na lista da esquerda e use a boleta para comprar ou aplicar. O tempo passa sozinho: um dia útil a cada 5 segundos, e todo mês o que sobra do seu salário cai no saldo. Dá para pausar ou acelerar lá em cima.</p>`;
+        return `<p class="vazio">Você ainda não investiu. Escolha um ativo na lista da esquerda e use a boleta para comprar ou aplicar. O tempo passa sozinho: um dia útil a cada minuto, e todo mês o que sobra do seu salário cai no saldo. Dá para pausar ou acelerar lá em cima.</p>`;
     }
     const total = patrimonioAtual();
     const cor = i => (i === linhas.length ? '#3a4255' : CORES_CARTEIRA[i % CORES_CARTEIRA.length]);
