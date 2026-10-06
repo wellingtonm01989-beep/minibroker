@@ -20,9 +20,7 @@
         --amarelo: #f0b90b;
         --raio: 10px;
     }
-
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
         background: var(--fundo);
         color: var(--texto);
@@ -30,7 +28,6 @@
         font-size: 14px;
         min-height: 100vh;
     }
-
     button { font: inherit; color: inherit; cursor: pointer; border: none; background: none; }
     input { font: inherit; color: inherit; }
     .num { font-variant-numeric: tabular-nums; }
@@ -65,7 +62,6 @@
     }
     .tempo button:hover { border-color: var(--azul); color: #fff; }
     .tempo button.forte { background: var(--azul); border-color: var(--azul); color: #fff; }
-
     .relogio { display: flex; flex-direction: column; gap: 4px; }
     .relogio select {
         background: var(--painel-2); border: 1px solid var(--borda); border-radius: 8px;
@@ -185,8 +181,9 @@
         background: var(--painel-2); color: var(--mudo); font-weight: 600;
     }
     .atalhos button:hover { color: var(--texto); }
-    .linha { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
+    .linha { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 13px; }
     .linha span { color: var(--mudo); }
+    .linha b { text-align: right; }
     .linha.total { border-top: 1px solid var(--borda); margin-top: 4px; padding-top: 10px; font-size: 15px; }
     .enviar {
         width: 100%; padding: 13px; border-radius: 8px; font-weight: 800;
@@ -221,9 +218,36 @@
     .extrato-item { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--borda); }
     .extrato-item:first-child { border-top: none; }
     .extrato-item small { color: var(--mudo); display: block; }
+    .extrato-item b { white-space: nowrap; }
     .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
     .card { background: var(--painel-2); border-radius: 8px; padding: 14px; line-height: 1.55; }
     .card h4 { margin-bottom: 6px; }
+
+    /* Vida e carreira */
+    .cards.vida { grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); align-items: start; }
+    .trilha { text-align: left; border: 1px solid transparent; }
+    .trilha:hover { border-color: var(--azul); }
+    .trilha small { display: block; color: var(--mudo); font-size: 12px; }
+    .escada { list-style: none; }
+    .escada li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; color: var(--mudo); }
+    .escada li.feito { color: var(--verde); }
+    .escada li.atual { color: var(--texto); font-weight: 700; }
+    .escada li span:last-child { white-space: nowrap; }
+    .opcao {
+        display: flex; justify-content: space-between; align-items: center; gap: 10px;
+        width: 100%; text-align: left; padding: 8px 10px; margin-top: 6px;
+        border: 1px solid var(--borda); border-radius: 8px;
+    }
+    .opcao:hover { border-color: var(--azul); }
+    .opcao.ativo { border-color: var(--azul); background: rgba(61, 123, 253, .12); }
+    .opcao small { display: block; color: var(--mudo); font-size: 12px; line-height: 1.4; }
+    .opcao b { white-space: nowrap; }
+    .meta { height: 8px; border-radius: 99px; background: var(--fundo); overflow: hidden; margin: 10px 0; }
+    .meta div { height: 100%; background: var(--verde); border-radius: 99px; }
+    .seg.quebra { flex-wrap: wrap; }
+    .trilha.ativo { border-color: var(--azul); }
+    .link-botao { color: var(--mudo); font-size: 12px; text-decoration: underline; margin-top: 12px; }
+    .link-botao:hover { color: var(--texto); }
 
     .rodape {
         display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -231,7 +255,6 @@
     }
     .rodape button { border: 1px solid var(--borda); padding: 7px 12px; border-radius: 8px; color: var(--mudo); }
     .rodape button:hover { color: var(--vermelho); border-color: var(--vermelho); }
-
     .toast {
         position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 20px);
         background: var(--painel-2); border: 1px solid var(--borda); border-left: 4px solid var(--azul);
@@ -242,7 +265,6 @@
     .toast.visivel { opacity: 1; transform: translate(-50%, 0); }
     .toast.erro { border-left-color: var(--vermelho); }
     .toast.ok { border-left-color: var(--verde); }
-
     .amarelo { color: var(--amarelo); }
     .cofrinho {
         text-align: left; padding: 6px 12px; border-radius: 8px;
@@ -254,7 +276,6 @@
     .cofrinho:disabled { border-color: var(--borda); background: none; animation: none; cursor: default; }
     .cofrinho:disabled strong { color: var(--texto); }
     @keyframes brilho { 50% { box-shadow: 0 0 0 4px rgba(22, 199, 132, .15); } }
-
     .selo-contador {
         display: none; min-width: 18px; padding: 1px 6px; border-radius: 99px;
         background: var(--vermelho); color: #fff; font-size: 11px; margin-left: 4px;
@@ -275,6 +296,8 @@
     .selo.setor { background: rgba(168, 85, 247, .15); color: #c084fc; }
     .selo.economia { background: rgba(240, 185, 11, .15); color: var(--amarelo); }
     .selo.resultado { background: var(--verde-fundo); color: var(--verde); }
+    .selo.cisne { background: rgba(255, 255, 255, .12); color: #e6e9f0; }
+    .selo.rumor { background: rgba(234, 57, 67, .15); color: #ff7a82; }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
     .chip { background: var(--painel-2); border: 1px solid var(--borda); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
     .chip:hover { border-color: var(--azul); }
@@ -300,105 +323,113 @@
 </style>
 </head>
 <body>
-    <header class="topbar">
-        <div class="logo">
-            <div class="logo-mark">M</div>
-            <div>MiniBroker<small>dinheiro de mentira, mercado de verdade</small></div>
-        </div>
-        <div class="kpis">
-            <div class="kpi"><span>Data</span><strong id="kData" class="num"></strong></div>
-            <div class="kpi"><span>Saldo disponível</span><strong id="kCaixa" class="num"></strong></div>
-            <div class="kpi"><span>Patrimônio total</span><strong id="kPatrimonio" class="num"></strong></div>
-            <div class="kpi" title="Ganho ou perda dos investimentos, sem contar o dinheiro que você colocou"><span>Resultado</span><strong id="kResultado" class="num"></strong></div>
-            <div class="kpi" title="Todo mês chega dinheiro novo. Em dezembro vem em dobro (13º) e em janeiro aumenta com o salário mínimo"><span>Próximo aporte</span><strong id="kAporte" class="num"></strong></div>
-            <button class="kpi cofrinho" id="proventos" title="Passar os dividendos para o saldo disponível"></button>
-        </div>
-        <div class="tempo">
-            <span class="tempo-label">Avançar</span>
-            <button data-dias="1">1 dia</button>
-            <button data-dias="21" class="forte">1 mês</button>
-            <button data-dias="252">1 ano</button>
-        </div>
-        <div class="relogio">
-            <select id="velocidade" aria-label="Velocidade do tempo">
-                <option value="1800">Tempo real · 15 dias a cada 30 min</option>
-                <option value="30">Rápido · 15 dias a cada 30 s</option>
-                <option value="0">Tempo pausado</option>
-            </select>
-            <span id="contagem" class="num"></span>
-        </div>
-    </header>
-    <div class="progresso"><div id="progresso"></div></div>
 
-    <div class="ticker"><div class="ticker-track" id="ticker"></div></div>
+<header class="topbar">
+    <div class="logo">
+        <div class="logo-mark">M</div>
+        <div>MiniBroker<small>dinheiro de mentira, mercado de verdade</small></div>
+    </div>
+    <div class="kpis">
+        <div class="kpi"><span>Data</span><strong id="kData" class="num"></strong></div>
+        <div class="kpi" title="Seu cargo atual. Veja o salário e as promoções na aba Vida e carreira"><span>Profissão</span><strong id="kCargo"></strong></div>
+        <div class="kpi"><span>Saldo disponível</span><strong id="kCaixa" class="num"></strong></div>
+        <div class="kpi"><span>Patrimônio total</span><strong id="kPatrimonio" class="num"></strong></div>
+        <div class="kpi" title="Quanto seu patrimônio (investimentos e bens) ganhou ou perdeu, sem contar o dinheiro que você guardou do salário"><span>Resultado</span><strong id="kResultado" class="num"></strong></div>
+        <div class="kpi" title="A Selic é a taxa básica de juros. O Copom, do Banco Central, decide a Selic a cada 3 meses, numa quarta-feira"><span>Selic · próximo Copom</span><strong id="kSelic" class="num"></strong></div>
+        <div class="kpi" title="Governo eleito e data da próxima eleição. O perfil do governo muda os juros e a inflação no longo prazo"><span>Governo · próxima eleição</span><strong id="kGoverno"></strong></div>
+        <div class="kpi" title="O que sobra do salário depois dos impostos e do custo de vida. Cai no saldo no começo de cada mês"><span>Sobra do mês</span><strong id="kSobra" class="num"></strong></div>
+        <button class="kpi cofrinho" id="proventos" title="Passar os dividendos para o saldo disponível"></button>
+    </div>
+    <div class="tempo">
+        <span class="tempo-label">Avançar</span>
+        <button data-dias="21" class="forte">1 mês</button>
+        <button data-dias="252">1 ano</button>
+    </div>
+    <div class="relogio">
+        <select id="velocidade" aria-label="Velocidade do tempo">
+            <option value="0">Tempo pausado</option>
+            <option value="1">1x · um dia a cada 5 s</option>
+            <option value="2">2x · um dia a cada 2,5 s</option>
+            <option value="3">3x · um dia a cada 1,7 s</option>
+        </select>
+        <span id="contagem" class="num"></span>
+    </div>
+</header>
+<div class="progresso"><div id="progresso"></div></div>
 
-    <main class="grid">
-        <aside class="panel watch">
-            <div class="watch-topo">
-                <input id="busca" type="search" placeholder="Buscar ativo (ex.: PETR4, CDB)" autocomplete="off">
-                <div class="filtros" id="filtros">
-                    <button data-f="todos" class="ativo">Todos</button>
-                    <button data-f="fixa">Renda fixa</button>
-                    <button data-f="acao">Ações</button>
-                    <button data-f="fii">FIIs</button>
-                    <button data-f="etf">ETFs</button>
-                </div>
+<div class="ticker"><div class="ticker-track" id="ticker"></div></div>
+
+<main class="grid">
+    <aside class="panel watch">
+        <div class="watch-topo">
+            <input id="busca" type="search" placeholder="Buscar ativo (ex.: PETR4, CDB)" autocomplete="off">
+            <div class="filtros" id="filtros">
+                <button data-f="todos" class="ativo">Todos</button>
+                <button data-f="fixa">Renda fixa</button>
+                <button data-f="acao">Ações</button>
+                <button data-f="fii">FIIs</button>
+                <button data-f="etf">ETFs</button>
             </div>
-            <div id="watchlist"></div>
-        </aside>
-
-        <section class="panel detalhe">
-            <div class="det-head">
-                <div>
-                    <div class="det-sym" id="dSym"></div>
-                    <div class="det-nome" id="dNome"></div>
-                </div>
-                <div class="det-preco">
-                    <strong id="dPreco" class="num"></strong>
-                    <span id="dVar" class="num"></span>
-                </div>
-            </div>
-            <div class="chart-bar">
-                <div class="seg" id="periodos">
-                    <button data-n="21">1M</button>
-                    <button data-n="63">3M</button>
-                    <button data-n="126">6M</button>
-                    <button data-n="252">1A</button>
-                    <button data-n="100000">Tudo</button>
-                </div>
-                <div class="seg" id="modos">
-                    <button data-modo="velas">Velas</button>
-                    <button data-modo="linha">Linha</button>
-                </div>
-            </div>
-            <div class="chart-wrap"><canvas id="grafico"></canvas></div>
-            <div class="stats" id="dStats"></div>
-            <div class="explica" id="dExplica"></div>
-            <div class="det-noticias" id="dNoticias"></div>
-        </section>
-
-        <aside class="panel boleta" id="boleta"></aside>
-    </main>
-
-    <section class="panel inferior">
-        <div class="tabs" id="tabs">
-            <button data-aba="carteira">Minha carteira</button>
-            <button data-aba="noticias">Notícias <span class="selo-contador" id="seloNoticias"></span></button>
-            <button data-aba="patrimonio">Evolução do patrimônio</button>
-            <button data-aba="extrato">Extrato</button>
-            <button data-aba="aprenda">Aprenda</button>
         </div>
-        <div class="aba" id="aba"></div>
+        <div id="watchlist"></div>
+    </aside>
+
+    <section class="panel detalhe">
+        <div class="det-head">
+            <div>
+                <div class="det-sym" id="dSym"></div>
+                <div class="det-nome" id="dNome"></div>
+            </div>
+            <div class="det-preco">
+                <strong id="dPreco" class="num"></strong>
+                <span id="dVar" class="num"></span>
+            </div>
+        </div>
+        <div class="chart-bar">
+            <div class="seg" id="periodos">
+                <button data-n="21">1M</button>
+                <button data-n="63">3M</button>
+                <button data-n="126">6M</button>
+                <button data-n="252">1A</button>
+                <button data-n="100000">Tudo</button>
+            </div>
+            <div class="seg" id="modos">
+                <button data-modo="velas">Velas</button>
+                <button data-modo="linha">Linha</button>
+            </div>
+        </div>
+        <div class="chart-wrap"><canvas id="grafico"></canvas></div>
+        <div class="stats" id="dStats"></div>
+        <div class="explica" id="dExplica"></div>
+        <div class="det-noticias" id="dNoticias"></div>
     </section>
 
-    <footer class="rodape">
-        <div id="fonte"></div>
-        <button id="reiniciar">Recomeçar do zero</button>
-    </footer>
+    <aside class="panel boleta" id="boleta"></aside>
+</main>
 
-    <div class="toast" id="toast"></div>
+<section class="panel inferior">
+    <div class="tabs" id="tabs">
+        <button data-aba="carteira">Minha carteira</button>
+        <button data-aba="vida">Vida e carreira</button>
+        <button data-aba="bens">Bens e reserva</button>
+        <button data-aba="empresas">Empresas</button>
+        <button data-aba="noticias">Notícias <span class="selo-contador" id="seloNoticias"></span></button>
+        <button data-aba="patrimonio">Evolução do patrimônio</button>
+        <button data-aba="extrato">Extrato</button>
+        <button data-aba="aprenda">Aprenda</button>
+    </div>
+    <div class="aba" id="aba"></div>
+</section>
 
-    <script src="noticias.js"></script>
-    <script src="app.js"></script>
+<footer class="rodape">
+    <div id="fonte"></div>
+    <button id="reiniciar">Recomeçar do zero</button>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script src="noticias.js"></script>
+<script src="vida.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
