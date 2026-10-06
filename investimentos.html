@@ -63,6 +63,8 @@
     .kpis { display: flex; gap: 28px; flex: 1; flex-wrap: wrap; }
     .kpi span { display: block; font-size: 11px; color: var(--mudo); text-transform: uppercase; letter-spacing: .04em; }
     .kpi strong { font-size: 16px; }
+    .mini-barra { display: block; width: 64px; height: 4px; margin-top: 4px; border-radius: 99px; background: var(--borda); overflow: hidden; }
+    .mini-barra i { display: block; height: 100%; border-radius: 99px; }
     .tempo { display: flex; align-items: center; gap: 6px; }
     .tempo-label { font-size: 11px; color: var(--mudo); text-transform: uppercase; margin-right: 4px; }
     .tempo button {
@@ -440,6 +442,7 @@
         <div class="kpi extra" title="A Selic é a taxa básica de juros. O Copom, do Banco Central, decide a Selic a cada 3 meses, numa quarta-feira"><span>Selic · próximo Copom</span><strong id="kSelic" class="num"></strong></div>
         <div class="kpi extra" title="Governo eleito e data da próxima eleição. O perfil do governo muda os juros e a inflação no longo prazo"><span>Governo · próxima eleição</span><strong id="kGoverno"></strong></div>
         <div class="kpi" title="O que sobra do salário depois dos impostos e do custo de vida. Cai no saldo no começo de cada mês"><span>Sobra do mês</span><strong id="kSobra" class="num"></strong></div>
+        <div class="kpi"><span>Felicidade</span><strong id="kFelicidade" class="num"></strong></div>
         <button class="kpi cofrinho" id="proventos" title="Passar os dividendos para o saldo disponível"></button>
         <button class="kpi kpi-mais" id="kpiMais" aria-expanded="false"><span>Profissão, Selic</span>Ver mais ▾</button>
     </div>

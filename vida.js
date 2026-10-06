@@ -144,18 +144,37 @@ const IR_GANHO_CAPITAL = 0.15;        // imposto sobre o lucro na venda do imóv
 const PRAZO_VENDA = { carro: 10, imovel: 120 }; // dias úteis até o dinheiro entrar: imóvel demora uns 6 meses
 
 // Imprevistos: valor = parte do custo de vida (fator) ou parte do valor do bem (pct), sempre com um mínimo.
+// saude = problema de saúde, que fica mais comum quando a felicidade está baixa (o estresse adoece).
 const IMPREVISTOS = [
     { nome: 'O celular quebrou e precisou ser trocado', fator: 0.25, min: 600, peso: 4 },
-    { nome: 'Dor de dente: o dentista cobrou o tratamento', fator: 0.35, min: 800, peso: 3 },
+    { nome: 'Dor de dente: o dentista cobrou o tratamento', fator: 0.35, min: 800, peso: 3, saude: true },
     { nome: 'A geladeira queimou e teve de ser trocada', fator: 0.45, min: 2200, peso: 2 },
-    { nome: 'Consulta e exames de urgência fora do plano', fator: 0.6, min: 1500, peso: 3 },
-    { nome: 'Acidente doméstico: pronto-socorro e remédios', fator: 1.2, min: 2500, peso: 2 },
-    { nome: 'Cirurgia de urgência', fator: 3, min: 9000, peso: 1 },
+    { nome: 'Consulta e exames de urgência fora do plano', fator: 0.6, min: 1500, peso: 3, saude: true },
+    { nome: 'Acidente doméstico: pronto-socorro e remédios', fator: 1.2, min: 2500, peso: 2, saude: true },
+    { nome: 'Cirurgia de urgência', fator: 3, min: 9000, peso: 1, saude: true },
+    { nome: 'Crise de estresse: afastamento, terapia e remédios', fator: 1.5, min: 4000, peso: 0, saude: true, estresse: true },
     { nome: 'O carro quebrou: conserto na oficina', bem: 'carro', pct: 0.05, min: 1500, peso: 4 },
     { nome: 'Batida de carro: franquia e reparos', bem: 'carro', pct: 0.09, min: 3000, peso: 1 },
     { nome: 'Vazamento no telhado: reforma urgente', bem: 'imovel', pct: 0.012, min: 3000, peso: 4 },
     { nome: 'Infiltração e problema elétrico: obra de emergência', bem: 'imovel', pct: 0.02, min: 5000, peso: 2 }
 ];
+
+/* ---------- Felicidade (0 a 100) ---------- */
+// Todo mês a felicidade anda um pouco em direção a um "alvo", que depende de quanto do salário você
+// se permite gastar vivendo. Alegrias de compras e mudanças de vida passam com o tempo (adaptação hedônica).
+const FELICIDADE_INICIAL = 70;
+const FELICIDADE_RITMO = 0.10;        // a cada mês, anda 10% da distância até o alvo
+const FELICIDADE_SUBIR_PADRAO = 10;   // por nível de padrão de vida que você sobe
+const FELICIDADE_DESCER_PADRAO = 6;   // por nível que você desce
+const FELICIDADE_BEM_MAX = 25;        // alegria máxima de uma compra
+const FELICIDADE_BEM_FATOR = 40;      // alegria = 40 × (preço do bem ÷ seu patrimônio total depois da compra)
+const FELICIDADE_CASA_PROPRIA = 8;    // morar no que é seu deixa o alvo mais alto
+const FELICIDADE_CARRO = 4;
+const FELICIDADE_NO_VERMELHO = -12;   // dívida no cheque especial tira o sono
+// Felicidade baixa: imprevistos até 2,5 vezes mais frequentes e problemas de saúde até 3 vezes mais prováveis entre eles.
+const IMPREVISTO_MULT_TRISTE = 2.5;
+const IMPREVISTO_MULT_FELIZ = 0.6;
+const SAUDE_MULT_TRISTE = 3;
 
 // Financiamento. SAC: amortiza o mesmo tanto todo mês, então a parcela começa alta e diminui.
 // Price: parcela igual todo mês, começa menor, mas no fim se paga mais juros.

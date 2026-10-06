@@ -358,7 +358,7 @@ function passarDia() {
     gerirEleicao();
     verificarEmpresas();
     if (estado.carreira && !estado.mercadoFechado && dia > 126 && Math.random() < PROB_CISNE_DIA) cisneNegro();
-    if (estado.carreira && dia > 30 && Math.random() < PROB_IMPREVISTO_DIA) imprevisto();
+    if (estado.carreira && dia > 30 && Math.random() < PROB_IMPREVISTO_DIA * multImprevistos()) imprevisto();
     if (dia >= estado.proximaNoticia) {
         gerarNoticia();
         estado.proximaNoticia = dia + 15 + Math.floor(Math.random() * 13);
@@ -918,6 +918,7 @@ function fecharMes() {
         estado.totalAportado += decimo;
         registrar('13º salário! Um salário extra, já com os descontos. Hora de investir.', decimo);
     }
+    atualizarFelicidadeDoMes();
 }
 
 function proximoFechamento() {
@@ -970,10 +971,61 @@ function escolherCarreira(trilha) {
 
 function mudarPadraoVida(nivel) {
     if (nivel === estado.padraoVida) return;
+    // A alegria conta a partir do padrão do começo do mês: subir e descer no mesmo mês se anulam.
+    const bonus = d => (d > 0 ? d * FELICIDADE_SUBIR_PADRAO : d * FELICIDADE_DESCER_PADRAO);
+    const novo = bonus(nivel - estado.padraoMes);
+    const delta = novo - estado.bonusPadraoMes;
+    estado.bonusPadraoMes = novo;
+    mudarFelicidade(delta);
     estado.padraoVida = nivel;
     registrar(`Você mudou seu padrão de vida para "${PADROES_VIDA[nivel].nome}"`, 0);
-    mostrarToast(`Seu custo de vida agora é de <b>${fmtBRL(custoDeVida())}</b> por mês.`, 'ok');
+    const efeito = Math.round(delta);
+    mostrarToast(`Seu custo de vida agora é de <b>${fmtBRL(custoDeVida())}</b> por mês.` +
+        (efeito ? `<br>Felicidade: <b class="${classe(efeito)}">${efeito > 0 ? '+' : ''}${efeito}</b>.` : ''), 'ok');
     concluirOperacao();
+}
+
+/* ---------- Felicidade ---------- */
+// 0 = feliz o bastante, 1 = no fundo do poço (e o contrário em alegria).
+const tristeza = () => limitar((50 - estado.felicidade) / 50, 0, 1);
+const alegria = () => limitar((estado.felicidade - 50) / 50, 0, 1);
+// Gente triste e estressada adoece e se descuida mais: os imprevistos ficam mais frequentes.
+const multImprevistos = () => 1 + tristeza() * (IMPREVISTO_MULT_TRISTE - 1) - alegria() * (1 - IMPREVISTO_MULT_FELIZ);
+const mudarFelicidade = delta => (estado.felicidade = limitar(estado.felicidade + delta, 0, 100));
+
+const HUMORES = [[80, '😄', 'Muito feliz'], [60, '🙂', 'Feliz'], [40, '😐', 'Normal'], [20, '😟', 'Desanimado'], [0, '😢', 'Muito triste']];
+const humor = (f = estado.felicidade) => HUMORES.find(([min]) => f >= min);
+const corFelicidade = (f = estado.felicidade) => (f >= 60 ? 'var(--verde)' : f >= 35 ? 'var(--amarelo)' : 'var(--vermelho)');
+
+// Para onde a felicidade vai se nada mudar. Quem só guarda e quase não aproveita o salário fica com um alvo baixo.
+function alvoFelicidade() {
+    const h = holerite();
+    const parteVida = h.liquido > 0 ? h.custoBase / h.liquido : 1;
+    const partes = {
+        parteVida,
+        padrao: Math.min(75, 15 + parteVida * 85),
+        casa: moradiaAtual() ? FELICIDADE_CASA_PROPRIA : 0,
+        carro: estado.bens.some(b => b.tipo === 'carro') ? FELICIDADE_CARRO : 0,
+        vermelho: estado.caixa < -0.005 ? FELICIDADE_NO_VERMELHO : 0
+    };
+    partes.alvo = limitar(partes.padrao + partes.casa + partes.carro + partes.vermelho, 0, 100);
+    return partes;
+}
+
+function atualizarFelicidadeDoMes() {
+    const antes = estado.felicidade;
+    mudarFelicidade((alvoFelicidade().alvo - antes) * FELICIDADE_RITMO);
+    estado.padraoMes = estado.padraoVida;
+    estado.bonusPadraoMes = 0;
+    if (antes >= 35 && estado.felicidade < 35) {
+        registrar('Sua felicidade está baixa: só trabalhar e guardar cansa. Imprevistos e problemas de saúde ficam mais frequentes. Que tal aproveitar um pouco mais o seu salário?', 0);
+    }
+}
+
+// Comprar um bem dá alegria proporcional ao tamanho da compra perto de tudo o que você tem.
+function alegriaDaCompra(preco) {
+    const base = Math.max(0, patrimonioAtual()) + preco;
+    return limitar(FELICIDADE_BEM_FATOR * preco / base, 1, FELICIDADE_BEM_MAX);
 }
 
 function pedirCarreira() {
@@ -1593,12 +1645,15 @@ function cobrirDespesa(valor, texto) {
     }
 }
 
+// Com a felicidade baixa, os problemas de saúde pesam mais no sorteio e aparece a crise de estresse.
+const pesoImprevisto = i => (i.estresse ? 2 * tristeza() : i.peso * (i.saude ? 1 + tristeza() * (SAUDE_MULT_TRISTE - 1) : 1));
+
 function imprevisto() {
-    const possiveis = IMPREVISTOS.filter(i => !i.bem || estado.bens.some(b => b.tipo === i.bem));
-    let x = Math.random() * possiveis.reduce((soma, i) => soma + i.peso, 0);
+    const possiveis = IMPREVISTOS.filter(i => (!i.bem || estado.bens.some(b => b.tipo === i.bem)) && pesoImprevisto(i) > 0);
+    let x = Math.random() * possiveis.reduce((soma, i) => soma + pesoImprevisto(i), 0);
     let ev = possiveis[possiveis.length - 1];
     for (const i of possiveis) {
-        x -= i.peso;
+        x -= pesoImprevisto(i);
         if (x <= 0) { ev = i; break; }
     }
     let valor, texto = 'Imprevisto: ' + ev.nome;
@@ -1636,6 +1691,8 @@ function comprarBem() {
     const item = CATALOGO_BENS.find(i => i.id === compraEmCurso.id);
     const sim = simularCompra(item, compraEmCurso.entrada, compraEmCurso.prazo, compraEmCurso.tabela);
     if (!sim.ok) return mostrarToast(sim.motivo, 'erro', 9000);
+    const alegriaCompra = alegriaDaCompra(sim.preco);
+    mudarFelicidade(alegriaCompra);
     estado.caixa -= sim.dinheiroHoje;
     estado.bens.push({
         uid: estado.proximoBem++, tipo: item.tipo, nome: item.nome, compra: sim.preco,
@@ -1644,7 +1701,7 @@ function comprarBem() {
         residencia: item.tipo === 'imovel' && !moradiaAtual(), venda: null
     });
     registrar(`Compra: ${item.nome} por ${fmtBRL(sim.preco)}` + (sim.financiado > 0 ? ` (entrada de ${fmtBRL(sim.entradaValor)} e o resto financiado)` : ' à vista') + (sim.itbi ? `. Impostos e cartório: ${fmtBRL(sim.itbi)}` : ''), -sim.dinheiroHoje);
-    mostrarToast(`Você comprou <b>${item.nome}</b>!` + (item.tipo === 'imovel' ? ' Se for sua moradia, você deixa de pagar aluguel, mas passa a pagar IPTU e manutenção.' : ' Lembre: carro perde valor todo ano e tem IPVA, seguro e manutenção.'), 'ok', 9000);
+    mostrarToast(`Você comprou <b>${item.nome}</b>! Felicidade <b class="sobe">+${Math.round(alegriaCompra)}</b>.` + (item.tipo === 'imovel' ? ' Se for sua moradia, você deixa de pagar aluguel, mas passa a pagar IPTU e manutenção.' : ' Lembre: carro perde valor todo ano e tem IPVA, seguro e manutenção.'), 'ok', 9000);
     compraEmCurso = null;
     concluirOperacao();
 }
@@ -1947,6 +2004,10 @@ function renderTopo() {
         ? `${fmtBRL(h.sobra)}${p.dezembro ? ' + 13º' : ''} em ${p.data.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`
         : '—';
     kSobra.className = 'num ' + (h.sobra < 0 ? 'desce' : '');
+    const [, rosto, nomeHumor] = humor();
+    document.getElementById('kFelicidade').innerHTML =
+        `${rosto} ${Math.round(estado.felicidade)}<span class="mini-barra"><i style="width:${estado.felicidade}%;background:${corFelicidade()}"></i></span>`;
+    document.getElementById('kFelicidade').parentElement.title = `${nomeHumor}. Só trabalhar e guardar cansa: a felicidade cai. Com ela baixa, imprevistos como doenças e cirurgias ficam mais frequentes. Veja na aba Vida e carreira.`;
 
     const botao = document.getElementById('proventos');
     botao.disabled = estado.proventos < 0.005;
@@ -2689,6 +2750,26 @@ function htmlVida() {
             <span>${v.nome}<small>${v.explica}</small></span><b class="num">${fmtBRL(custoDeVida(i))}</b>
         </button>`).join('');
 
+    const fel = alvoFelicidade();
+    const [, rosto, nomeHumor] = humor();
+    const [, rostoAlvo] = humor(fel.alvo);
+    const indo = fel.alvo > estado.felicidade + 1 ? 'subindo' : fel.alvo < estado.felicidade - 1 ? 'caindo' : 'estável';
+    const pontos = v => `${v > 0 ? '+' : ''}${Math.round(v)}`;
+    const mult = multImprevistos();
+    const cardFelicidade = `<div class="card">
+            <h4>Felicidade</h4>
+            <div class="linha"><span>${rosto} ${nomeHumor}</span><b class="num">${Math.round(estado.felicidade)} de 100</b></div>
+            <div class="meta"><div style="width:${estado.felicidade}%;background:${corFelicidade()}"></div></div>
+            ${linha(`Para onde está indo (${indo})`, `${rostoAlvo} ${Math.round(fel.alvo)}`, indo === 'subindo' ? 'sobe' : indo === 'caindo' ? 'desce' : '')}
+            ${linha(`Padrão de vida: ${fmtPct(Math.min(fel.parteVida, 9.99), false)} do salário líquido`, String(Math.round(fel.padrao)))}
+            ${fel.casa ? linha('Morar na casa própria', pontos(fel.casa), 'sobe') : ''}
+            ${fel.carro ? linha('Ter carro', pontos(fel.carro), 'sobe') : ''}
+            ${fel.vermelho ? linha('Dívida no vermelho', pontos(fel.vermelho), 'desce') : ''}
+            ${linha('Chance de imprevistos', mult > 1.05 ? `${fmtNum(mult)}× maior` : mult < 0.95 ? `${fmtNum(1 / mult)}× menor` : 'normal', mult > 1.05 ? 'desce' : mult < 0.95 ? 'sobe' : '')}
+            ${estado.felicidade < 50 ? '<p class="desce"><b>Com a felicidade baixa, problemas de saúde (até cirurgias) e crises de estresse ficam mais prováveis.</b></p>' : ''}
+            <p class="dica">Todo mês a felicidade anda um pouco em direção ao alvo. Quem só trabalha e guarda tudo vai ficando triste. Subir o padrão de vida dá +${FELICIDADE_SUBIR_PADRAO} na hora (descer tira ${FELICIDADE_DESCER_PADRAO}), e comprar um bem dá alegria conforme o tamanho da compra perto do seu patrimônio. Mas a alegria passa: aos poucos você se acostuma e ela volta para o alvo. O segredo é equilibrar aproveitar hoje e investir para o futuro.</p>
+        </div>`;
+
     const renda = rendaPassivaMensal();
     const gastos = h.custo + h.bens;
     const cobertura = gastos ? renda / gastos : 0;
@@ -2719,10 +2800,11 @@ function htmlVida() {
             ${promocao}
             <button class="link-botao" data-vida="trocar">Trocar de carreira</button>
         </div>
+        ${cardFelicidade}
         <div class="card">
             <h4>Padrão de vida</h4>
             ${padroes}
-            <p class="dica">A escolha é sua e vale a partir do próximo salário. A inflação encarece todos os níveis com o tempo.</p>
+            <p class="dica">A escolha é sua e o custo vale a partir do próximo salário. Subir um nível deixa você mais feliz na hora; descer deixa mais triste. A inflação encarece todos os níveis com o tempo.</p>
         </div>
         <div class="card">
             <h4>Independência financeira</h4>
@@ -2818,6 +2900,7 @@ function completarEstado() {
     const padrao = {
         proventos: 0, efeitos: [], noticias: [], naoLidas: 0, usados: [],
         ajusteSelic: 0, ajusteIpca: 0, baseSelic: null, baseIpca: null, rumores: [], proximoCopom: 0, governo: null, premioFiscal: 0, pesquisa: 0, tendenciaEleitoral: 0, campanha: false, anoEleicao: 0, proximaEleicao: 0, mercadoFechado: null, sombra: {}, antesCrise: {}, fund: {}, proximaNoticia: estado.dia + 3,
+        felicidade: FELICIDADE_INICIAL, bonusPadraoMes: 0,
         carreira: null, padraoVida: 0, salarioMinimo: SALARIO_MINIMO_INICIAL, indicePrecos: 1, fatorIR: 1, rolagem: {},
         bens: [], proximoBem: 1, indiceImoveis: 1, anoIPVA: 0,
         empresas: [], proximoEmp: 1, ofertasEmpresas: null, conjuntura: 0,
@@ -2825,6 +2908,7 @@ function completarEstado() {
         totalAportado: CAPITAL_INICIAL, investidoHist: estado.patrimonio.map(() => CAPITAL_INICIAL)
     };
     for (const k in padrao) if (estado[k] == null) estado[k] = padrao[k];
+    if (estado.padraoMes == null) estado.padraoMes = estado.padraoVida;
     if (!estado.proximoCopom) agendarCopom(20);
     if (!estado.proximaEleicao) agendarEleicao();
     if (!estado.ofertasEmpresas) gerarOfertasEmpresas();
