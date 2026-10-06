@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>MiniBroker</title>
 <meta name="description" content="Simulador de investimentos: dinheiro de mentira, mercado de verdade.">
 <meta name="theme-color" content="#131722">
@@ -321,17 +321,110 @@
         .grid { grid-template-columns: 250px minmax(0, 1fr); }
         .boleta { grid-column: 1 / -1; }
     }
+    .kpi-mais, .nav-celular { display: none; }
+
+    /* Celular: topo compacto, uma tela por vez (body[data-tela]) e barra de navegação embaixo. */
     @media (max-width: 760px) {
-        .grid { grid-template-columns: 1fr; padding: 8px; }
+        body { padding-bottom: calc(62px + env(safe-area-inset-bottom)); -webkit-tap-highlight-color: transparent; }
+        button, select { touch-action: manipulation; }
+
+        .topbar { padding: calc(10px + env(safe-area-inset-top)) 12px 10px; gap: 10px; align-items: flex-start; }
+        .logo { order: 1; }
+        .logo > div:last-child { display: none; }
+        .relogio { order: 2; flex: 1; min-width: 0; }
+        .relogio select { width: 100%; padding: 8px; }
+        .relogio span { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .tempo { order: 3; gap: 4px; }
+        .tempo-label { display: none; }
+        .tempo button { padding: 8px 9px; font-size: 13px; }
+        .kpis { order: 4; flex-basis: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 10px; }
+        .kpi span { font-size: 10px; }
+        .kpi strong { font-size: 14px; line-height: 1.3; }
+        .kpi.extra { display: none; order: 10; }
+        .topbar.aberto .kpi.extra { display: block; }
+        .kpi-mais {
+            display: block; order: 5; text-align: left; font-size: 13px; font-weight: 600; color: var(--azul);
+            border: 1px solid var(--borda); border-radius: 8px; padding: 4px 8px;
+        }
+        .kpi-mais span { color: var(--mudo); font-weight: 400; }
+        .cofrinho { order: 20; grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
+        .cofrinho:disabled { display: none; }
+
+        .grid { display: flex; flex-direction: column; gap: 10px; padding: 8px; }
+        .panel-title { padding: 12px 14px 8px; }
+
+        /* Mercado: a lista ocupa a tela, com a busca presa no alto ao rolar. */
+        .watch { max-height: none; overflow: visible; }
+        #watchlist { overflow: visible; }
+        .watch-topo { position: sticky; top: 0; z-index: 2; background: var(--painel); border-radius: var(--raio) var(--raio) 0 0; }
+        .watch-topo input { font-size: 16px; }
+        .filtros button { padding: 6px 12px; font-size: 13px; }
+        .ativo-linha { padding: 12px 14px; }
+
+        /* Negociar: preço e gráfico, logo abaixo a boleta, e depois os detalhes do ativo. */
+        .detalhe { display: contents; }
+        .det-head { order: 1; padding: 6px 6px 0; }
+        .det-sym { font-size: 20px; }
+        .det-preco strong { font-size: 22px; }
+        .chart-bar { order: 2; margin: 0; }
+        .chart-wrap { order: 3; }
+        .chart-wrap canvas { height: 240px; touch-action: pan-y; }
+        .boleta { order: 4; }
+        .stats { order: 5; margin-top: 0; }
+        .explica { order: 6; margin-top: 0; }
+        .det-noticias { order: 7; margin-top: 0; padding: 0 6px; }
+
         .inferior { margin: 0 8px 8px; }
-        .watch { max-height: 300px; }
-        .topbar { padding: 12px 16px; gap: 14px; }
-        .kpis { gap: 16px; }
-        .chart-wrap canvas { height: 260px; }
+        .tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 10px; }
+        .tabs button {
+            padding: 10px 4px; font-size: 13px; white-space: normal; line-height: 1.25;
+            border: 1px solid var(--borda); border-radius: 8px;
+        }
+        .tabs button.ativo { border-color: var(--azul); background: rgba(61, 123, 253, .12); }
+        .tabs button[data-aba="carteira"], .tabs button[data-aba="vida"] { display: none; }
+        .aba { padding: 12px; }
+        #graficoPatrimonio { height: 240px; touch-action: pan-y; }
+        .cards.vida { grid-template-columns: 1fr; }
+        .tabela-carteira thead { display: none; }
+        .tabela-carteira tr {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px;
+            background: var(--painel-2); border-radius: 8px; padding: 12px; margin-bottom: 8px;
+        }
+        .tabela-carteira td { border: none; padding: 0; text-align: left; white-space: normal; }
+        .tabela-carteira td:first-child { grid-column: 1 / -1; font-size: 15px; }
+        .tabela-carteira td[data-rotulo]::before { content: attr(data-rotulo); display: block; font-size: 11px; color: var(--mudo); }
+        .tabela-carteira td[data-vazio] { display: none; }
+        .tabela-carteira td:last-child { grid-column: 1 / -1; }
+
+        body:not([data-tela="mercado"]) .watch,
+        body:not([data-tela="ativo"]) .detalhe > *,
+        body:not([data-tela="ativo"]) .boleta,
+        body[data-tela="carteira"] .tabs, body[data-tela="vida"] .tabs,
+        body:is([data-tela="mercado"], [data-tela="ativo"]) .inferior,
+        body:not([data-tela="mais"]) .rodape,
+        body:is([data-tela="carteira"], [data-tela="vida"], [data-tela="mais"]) .grid,
+        body:is([data-tela="carteira"], [data-tela="vida"], [data-tela="mais"]) .ticker { display: none; }
+
+        .rodape { padding: 4px 16px 16px; }
+        .toast { bottom: calc(74px + env(safe-area-inset-bottom)); }
+
+        .nav-celular {
+            display: grid; grid-template-columns: repeat(5, 1fr);
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 9;
+            background: var(--painel); border-top: 1px solid var(--borda);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .nav-celular button {
+            display: flex; flex-direction: column; align-items: center; gap: 3px;
+            padding: 8px 0 7px; font-size: 11px; font-weight: 600; color: var(--mudo); position: relative;
+        }
+        .nav-celular button.ativo { color: var(--azul); }
+        .nav-celular svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .nav-celular .selo-contador { position: absolute; top: 4px; left: 50%; margin-left: 6px; }
     }
 </style>
 </head>
-<body>
+<body data-tela="mercado">
 
 <header class="topbar">
     <div class="logo">
@@ -340,14 +433,15 @@
     </div>
     <div class="kpis">
         <div class="kpi"><span>Data</span><strong id="kData" class="num"></strong></div>
-        <div class="kpi" title="Seu cargo atual. Veja o salário e as promoções na aba Vida e carreira"><span>Profissão</span><strong id="kCargo"></strong></div>
+        <div class="kpi extra" title="Seu cargo atual. Veja o salário e as promoções na aba Vida e carreira"><span>Profissão</span><strong id="kCargo"></strong></div>
         <div class="kpi"><span>Saldo disponível</span><strong id="kCaixa" class="num"></strong></div>
         <div class="kpi"><span>Patrimônio total</span><strong id="kPatrimonio" class="num"></strong></div>
         <div class="kpi" title="Quanto seu patrimônio (investimentos e bens) ganhou ou perdeu, sem contar o dinheiro que você guardou do salário"><span>Resultado</span><strong id="kResultado" class="num"></strong></div>
-        <div class="kpi" title="A Selic é a taxa básica de juros. O Copom, do Banco Central, decide a Selic a cada 3 meses, numa quarta-feira"><span>Selic · próximo Copom</span><strong id="kSelic" class="num"></strong></div>
-        <div class="kpi" title="Governo eleito e data da próxima eleição. O perfil do governo muda os juros e a inflação no longo prazo"><span>Governo · próxima eleição</span><strong id="kGoverno"></strong></div>
+        <div class="kpi extra" title="A Selic é a taxa básica de juros. O Copom, do Banco Central, decide a Selic a cada 3 meses, numa quarta-feira"><span>Selic · próximo Copom</span><strong id="kSelic" class="num"></strong></div>
+        <div class="kpi extra" title="Governo eleito e data da próxima eleição. O perfil do governo muda os juros e a inflação no longo prazo"><span>Governo · próxima eleição</span><strong id="kGoverno"></strong></div>
         <div class="kpi" title="O que sobra do salário depois dos impostos e do custo de vida. Cai no saldo no começo de cada mês"><span>Sobra do mês</span><strong id="kSobra" class="num"></strong></div>
         <button class="kpi cofrinho" id="proventos" title="Passar os dividendos para o saldo disponível"></button>
+        <button class="kpi kpi-mais" id="kpiMais" aria-expanded="false"><span>Profissão, Selic</span>Ver mais ▾</button>
     </div>
     <div class="tempo">
         <span class="tempo-label">Avançar</span>
@@ -435,6 +529,15 @@
     <div id="fonte"></div>
     <button id="reiniciar">Recomeçar do zero</button>
 </footer>
+
+<!-- Só aparece no celular: cada botão mostra uma parte do jogo por vez. -->
+<nav class="nav-celular" id="navCelular">
+    <button data-tela="mercado"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15l4-4 3 3 5-6"/></svg>Mercado</button>
+    <button data-tela="ativo"><svg viewBox="0 0 24 24"><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3"/></svg>Negociar</button>
+    <button data-tela="carteira"><svg viewBox="0 0 24 24"><path d="M3 7h18v12H3zM3 7l2-3h14l2 3M16 13h2"/></svg>Carteira</button>
+    <button data-tela="vida"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Vida</button>
+    <button data-tela="mais"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Mais<span class="selo-contador" id="seloNav"></span></button>
+</nav>
 
 <div class="toast" id="toast"></div>
 

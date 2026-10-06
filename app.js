@@ -169,6 +169,7 @@ let filtro = 'todos';
 let busca = '';
 let hoverPrincipal = null;
 let hoverPatrimonio = null;
+let tela = 'mercado'; // só no celular: qual parte do jogo aparece (mercado, ativo, carteira, vida ou mais)
 
 /* ---------- Formatação ---------- */
 const fmtBRL = v => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -978,7 +979,8 @@ function mudarPadraoVida(nivel) {
 function pedirCarreira() {
     aba = 'vida';
     renderAba();
-    document.getElementById('tabs').scrollIntoView({ behavior: 'smooth' });
+    if (celular()) irPara('vida');
+    else document.getElementById('tabs').scrollIntoView({ behavior: 'smooth' });
     mostrarToast('Escolha uma profissão para o jogo começar.', 'erro');
 }
 
@@ -1481,7 +1483,7 @@ function fazerIPO(uid, fracao) {
     });
     estado.selecionado = e.listada;
     ipoEmCurso = null;
-    mostrarToast(`<b>${e.listada}</b> estreou na bolsa! Você ficou com ${fmtPct(sim.retidas / sim.total, false)} da empresa em ações, que pode negociar na lista da esquerda.`, 'ok', 10000);
+    mostrarToast(`<b>${e.listada}</b> estreou na bolsa! Você ficou com ${fmtPct(sim.retidas / sim.total, false)} da empresa em ações, que pode negociar na lista de ativos.`, 'ok', 10000);
     concluirOperacao();
 }
 
@@ -1956,6 +1958,9 @@ function renderSelo() {
     const selo = document.getElementById('seloNoticias');
     selo.textContent = estado.naoLidas > 99 ? '99+' : estado.naoLidas;
     selo.style.display = estado.naoLidas ? 'inline-block' : 'none';
+    const seloNav = document.getElementById('seloNav');
+    seloNav.textContent = selo.textContent;
+    seloNav.style.display = selo.style.display;
 }
 
 function renderTicker() {
@@ -2316,7 +2321,7 @@ function htmlCarteira() {
         }
     }
     if (!linhas.length) {
-        return `<p class="vazio">Você ainda não investiu. Escolha um ativo na lista da esquerda e use a boleta para comprar ou aplicar. O tempo passa sozinho: um dia útil a cada minuto, e todo mês o que sobra do seu salário cai no saldo. Dá para pausar ou acelerar lá em cima.</p>`;
+        return `<p class="vazio">Você ainda não investiu. Escolha um ativo na lista de ativos e use a boleta para comprar ou aplicar. O tempo passa sozinho: um dia útil a cada minuto, e todo mês o que sobra do seu salário cai no saldo. Dá para pausar ou acelerar no topo da tela.</p>`;
     }
     const total = patrimonioAtual();
     const cor = i => (i === linhas.length ? '#3a4255' : CORES_CARTEIRA[i % CORES_CARTEIRA.length]);
@@ -2325,13 +2330,15 @@ function htmlCarteira() {
     const barra = fatias.map((f, i) => `<div style="width:${(f.valor / totalFatias) * 100}%;background:${cor(i)}"></div>`).join('');
     const legenda = fatias.map((f, i) => `<span><i style="background:${cor(i)}"></i>${f.nome} ${fmtPct(f.valor / totalFatias, false)}</span>`).join('');
     return `<div class="legenda">${legenda}</div><div class="barra-alocacao">${barra}</div>
-    <table>
+    <table class="tabela-carteira">
         <thead><tr><th>Ativo</th><th>Quantidade</th><th>Preço médio</th><th>Preço atual</th><th>Investido</th><th>Valor atual</th><th>Resultado</th></tr></thead>
         <tbody>${linhas.map(l => {
             const res = l.valor - l.investido;
-            return `<tr data-id="${l.id}"><td><b>${l.nome}</b></td><td class="num">${l.qtd}</td><td class="num">${l.medio}</td><td class="num">${l.atual}</td>
-            <td class="num">${fmtBRL(l.investido)}</td><td class="num">${fmtBRL(l.valor)}</td>
-            <td class="num ${classe(res)}">${fmtBRL(res)} (${fmtPct(res / l.investido)})</td></tr>`;
+            // data-rotulo: no celular a tabela vira um cartão por ativo, com o nome de cada número ao lado.
+            const cel = (rotulo, v, cls = '') => `<td class="num ${cls}" data-rotulo="${rotulo}"${v === '—' ? ' data-vazio' : ''}>${v}</td>`;
+            return `<tr data-id="${l.id}"><td><b>${l.nome}</b></td>${cel('Quantidade', l.qtd)}${cel('Preço médio', l.medio)}${cel('Preço atual', l.atual)}
+            ${cel('Investido', fmtBRL(l.investido))}${cel('Valor atual', fmtBRL(l.valor))}
+            ${cel('Resultado', `${fmtBRL(res)} (${fmtPct(res / l.investido)})`, classe(res))}</tr>`;
         }).join('')}</tbody>
     </table>`;
 }
@@ -2877,8 +2884,37 @@ function selecionar(id) {
     renderWatchlist();
     renderDetalhe();
     renderBoleta();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (celular() && tela !== 'ativo') irPara('ativo');
+    else window.scrollTo({ top: 0, behavior: 'smooth' });
 }
+
+/* ---------- Celular: uma tela por vez ---------- */
+const celular = () => window.matchMedia('(max-width: 760px)').matches;
+
+function irPara(t) {
+    tela = t;
+    if (t === 'carteira' || t === 'vida') aba = t;
+    else if (t === 'mais' && (aba === 'carteira' || aba === 'vida')) aba = 'noticias';
+    document.body.dataset.tela = t;
+    document.querySelectorAll('#navCelular button').forEach(b => b.classList.toggle('ativo', b.dataset.tela === t));
+    hoverPrincipal = null;
+    hoverPatrimonio = null;
+    renderAba();
+    // Um gráfico escondido não tem tamanho: desenha de novo agora que ele aparece.
+    desenharPrincipal();
+    window.scrollTo(0, 0);
+}
+
+document.getElementById('navCelular').addEventListener('click', e => {
+    const b = e.target.closest('button[data-tela]');
+    if (b) irPara(b.dataset.tela);
+});
+
+document.getElementById('kpiMais').addEventListener('click', e => {
+    const aberto = document.querySelector('.topbar').classList.toggle('aberto');
+    e.currentTarget.setAttribute('aria-expanded', aberto);
+    e.currentTarget.innerHTML = aberto ? '<span>Mostrar menos</span>Fechar ▴' : '<span>Profissão, Selic</span>Ver mais ▾';
+});
 
 document.querySelector('.tempo').addEventListener('click', e => {
     const b = e.target.closest('button[data-dias]');
@@ -2933,24 +2969,25 @@ document.getElementById('modos').addEventListener('click', e => {
 });
 
 const grafico = document.getElementById('grafico');
-grafico.addEventListener('mousemove', e => {
+// Eventos de ponteiro: funcionam com o mouse e também com o dedo no celular.
+['pointermove', 'pointerdown'].forEach(ev => grafico.addEventListener(ev, e => {
     if (!grafico._indice) return;
     hoverPrincipal = grafico._indice(e.clientX);
     desenharPrincipal();
-});
-grafico.addEventListener('mouseleave', () => {
+}));
+grafico.addEventListener('pointerleave', () => {
     hoverPrincipal = null;
     desenharPrincipal();
 });
 
 const areaAba = document.getElementById('aba');
-areaAba.addEventListener('mousemove', e => {
+['pointermove', 'pointerdown'].forEach(ev => areaAba.addEventListener(ev, e => {
     const c = e.target.closest('#graficoPatrimonio');
     if (!c || !c._indice) return;
     hoverPatrimonio = c._indice(e.clientX);
     desenharPatrimonio();
-});
-areaAba.addEventListener('mouseleave', () => {
+}));
+areaAba.addEventListener('pointerleave', () => {
     hoverPatrimonio = null;
     desenharPatrimonio();
 });
@@ -2977,7 +3014,8 @@ document.getElementById('toast').addEventListener('click', e => {
     aba = 'noticias';
     renderAba();
     e.currentTarget.classList.remove('visivel');
-    document.getElementById('tabs').scrollIntoView({ behavior: 'smooth' });
+    if (celular()) irPara('mais');
+    else document.getElementById('tabs').scrollIntoView({ behavior: 'smooth' });
 });
 
 document.getElementById('tabs').addEventListener('click', e => {
@@ -3029,6 +3067,7 @@ document.getElementById('reiniciar').addEventListener('click', () => {
     aba = 'vida';
     salvar();
     renderTudo();
+    irPara('vida');
     mostrarToast(`Jogo novo! Você tem ${fmtBRL(CAPITAL_INICIAL)} para investir. Escolha uma profissão para começar.`, 'ok');
 });
 
@@ -3051,6 +3090,7 @@ estado.ultimoTick = Date.now();
 if (!estado.carreira) aba = 'vida';
 salvar();
 renderTudo();
+irPara(estado.carreira ? 'mercado' : 'vida');
 if (!estado.carreira) mostrarToast('Bem-vindo! Escolha uma profissão para o jogo começar.', '', 8000);
 setInterval(tique, 1000);
 buscarTaxasBancoCentral();
