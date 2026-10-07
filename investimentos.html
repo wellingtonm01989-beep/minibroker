@@ -195,6 +195,7 @@
     .linha { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 13px; }
     .linha span { color: var(--mudo); }
     .linha b { text-align: right; }
+    .linha b.num { white-space: nowrap; }
     .linha.total { border-top: 1px solid var(--borda); margin-top: 4px; padding-top: 10px; font-size: 15px; }
     .enviar {
         width: 100%; padding: 13px; border-radius: 8px; font-weight: 800;
@@ -311,6 +312,9 @@
     .selo.resultado { background: var(--verde-fundo); color: var(--verde); }
     .selo.cisne { background: rgba(255, 255, 255, .12); color: #e6e9f0; }
     .selo.rumor { background: rgba(234, 57, 67, .15); color: #ff7a82; }
+    .selo.suaempresa { background: rgba(34, 211, 238, .15); color: #22d3ee; }
+    .selo.vida { background: rgba(236, 72, 153, .15); color: #f472b6; }
+    .selo.voce { background: var(--amarelo); color: #0b0e14; margin-left: 6px; }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
     .chip { background: var(--painel-2); border: 1px solid var(--borda); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
     .chip:hover { border-color: var(--azul); }
@@ -385,7 +389,7 @@
             border: 1px solid var(--borda); border-radius: 8px;
         }
         .tabs button.ativo { border-color: var(--azul); background: rgba(61, 123, 253, .12); }
-        .tabs button[data-aba="carteira"], .tabs button[data-aba="vida"] { display: none; }
+        .tabs button[data-aba="carteira"], .tabs button[data-aba="vida"], .tabs button[data-aba="empresas"] { display: none; }
         .aba { padding: 12px; }
         #graficoPatrimonio { height: 240px; touch-action: pan-y; }
         .cards.vida { grid-template-columns: 1fr; }
@@ -403,17 +407,17 @@
         body:not([data-tela="mercado"]) .watch,
         body:not([data-tela="ativo"]) .detalhe > *,
         body:not([data-tela="ativo"]) .boleta,
-        body[data-tela="carteira"] .tabs, body[data-tela="vida"] .tabs,
+        body:is([data-tela="carteira"], [data-tela="vida"], [data-tela="empresas"]) .tabs,
         body:is([data-tela="mercado"], [data-tela="ativo"]) .inferior,
         body:not([data-tela="mais"]) .rodape,
-        body:is([data-tela="carteira"], [data-tela="vida"], [data-tela="mais"]) .grid,
-        body:is([data-tela="carteira"], [data-tela="vida"], [data-tela="mais"]) .ticker { display: none; }
+        body:is([data-tela="carteira"], [data-tela="vida"], [data-tela="empresas"], [data-tela="mais"]) .grid,
+        body:is([data-tela="carteira"], [data-tela="vida"], [data-tela="empresas"], [data-tela="mais"]) .ticker { display: none; }
 
         .rodape { padding: 4px 16px 16px; }
         .toast { bottom: calc(74px + env(safe-area-inset-bottom)); }
 
         .nav-celular {
-            display: grid; grid-template-columns: repeat(5, 1fr);
+            display: grid; grid-template-columns: repeat(6, 1fr);
             position: fixed; left: 0; right: 0; bottom: 0; z-index: 9;
             background: var(--painel); border-top: 1px solid var(--borda);
             padding-bottom: env(safe-area-inset-bottom);
@@ -546,6 +550,7 @@
     <button data-tela="ativo"><svg viewBox="0 0 24 24"><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3"/></svg>Negociar</button>
     <button data-tela="carteira"><svg viewBox="0 0 24 24"><path d="M3 7h18v12H3zM3 7l2-3h14l2 3M16 13h2"/></svg>Carteira</button>
     <button data-tela="vida"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Vida</button>
+    <button data-tela="empresas"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V8l7-4 7 4v13M9 21v-5h6v5M9 11h.01M15 11h.01"/></svg>Empresas</button>
     <button data-tela="mais"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Mais<span class="selo-contador" id="seloNav"></span></button>
 </nav>
 

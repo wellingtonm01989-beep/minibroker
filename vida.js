@@ -8,6 +8,18 @@ const JUROS_CHEQUE_ESPECIAL = 0.08;     // ao mês, cobrado sobre o saldo negati
 // Meses mínimos no cargo antes de cada promoção (da 1ª em diante).
 const MESES_NO_CARGO = [12, 12, 18, 24, 24, 36, 36];
 
+// Emprego com carteira assinada: FGTS, demissão e seguro-desemprego (regras simplificadas).
+const FGTS_MES = 0.08;              // todo mês a empresa deposita 8% do salário bruto numa conta no seu nome
+const FGTS_RENDE_MES = 0.0025;      // o FGTS rende cerca de 3% ao ano
+const MULTA_FGTS = 0.4;             // quem é demitido sem justa causa recebe mais 40% do FGTS
+const FGTS_LIBERA_DIAS = 756;       // 3 anos seguidos sem carteira assinada liberam o saque
+const SEGURO_TETO = 1.5;            // o seguro-desemprego vai até 1,5 salário mínimo por mês
+const DIAS_OFERTA = 15;             // dias úteis para responder a uma oferta de emprego
+const FELICIDADE_DEMITIDO = -15;
+const FELICIDADE_DESEMPREGO = -10;  // no alvo, enquanto estiver sem emprego e sem cuidar de uma empresa
+const EMPREGADORES = ['Grupo Horizonte', 'Indústrias Aurora', 'Rede Bom Preço', 'TecNova', 'Construtora Pilar', 'Hospital Esperança',
+    'Transportes Rota Sul', 'Banco Atlântico', 'Agro Terra Viva', 'Hotel Mar Azul', 'Colégio Saber', 'Energia Clara'];
+
 // Cada cargo: [nome, salário bruto]. Os valores são de 2026 (ajustados ao mínimo de R$ 1.621).
 // Depois, cargos de entrada acompanham o salário mínimo e os altos só a inflação (veja salarioDoCargo no app.js).
 const CARREIRAS = {
@@ -216,33 +228,132 @@ function resumoFinanciamento(principal, taxaMes, n, tabela) {
 }
 
 /* ---------- Empresas ---------- */
-// v = custo variável (cresce junto com as vendas) e f = custo fixo (não muda quando as vendas caem), ambos como parte da receita.
-// Quanto maior o custo fixo, mais o lucro despenca quando a economia piora: é a alavancagem operacional.
-// sens = quanto o setor sente a economia; multiplo = quantos anos de lucro a empresa vale quando a Selic está em 10%.
+// Setores. sens = quanto as vendas sentem a economia; mult = ajuste no preço da empresa (quantos anos de lucro ela vale);
+// f = como as vendas (e a ação, se a empresa for para a bolsa) reagem a cada assunto das notícias;
+// tags = notícias de empresa que podem atingir a ação na bolsa.
 const SETORES_EMPRESA = {
-    alimentacao: { nome: 'Restaurantes e alimentação', curto: 'Foodtech', v: 0.34, f: 0.48, sens: 1.0, multiplo: 4.0, g: 0.0015, explica: 'Gente come fora quando tem dinheiro sobrando, então o movimento acompanha a economia.' },
-    varejo:      { nome: 'Lojas e comércio', curto: 'E-commerce', v: 0.58, f: 0.24, sens: 1.3, multiplo: 3.8, g: 0.0015, explica: 'Vende mais quando o crédito está barato e o consumo aquecido.' },
-    servicos:    { nome: 'Software e serviços', curto: 'Software', v: 0.18, f: 0.60, sens: 0.6, multiplo: 5.5, g: 0.0020, explica: 'Poucos custos variáveis e contratos recorrentes: sente menos a economia.' },
-    industria:   { nome: 'Indústria e oficinas', curto: 'Hardware', v: 0.50, f: 0.32, sens: 1.0, multiplo: 4.5, g: 0.0010, explica: 'Depende de encomendas das outras empresas, que caem quando a economia esfria.' },
-    saude:       { nome: 'Clínicas e saúde', curto: 'Healthtech', v: 0.22, f: 0.58, sens: 0.3, multiplo: 5.0, g: 0.0025, explica: 'As pessoas cuidam da saúde em qualquer fase da economia: é um setor mais defensivo.' },
-    construcao:  { nome: 'Construção e reformas', curto: 'Proptech', v: 0.55, f: 0.28, sens: 1.6, multiplo: 4.0, g: 0.0010, explica: 'Sofre muito com juros altos, porque as obras dependem de financiamento.' }
+    alimentacao:  { nome: 'Alimentação', sens: 1.0, mult: 1.0, tags: ['consumo'], f: { consumo: 1.0, mercado: 0.5, juros: -0.3 }, explica: 'Gente come fora quando tem dinheiro sobrando, então o movimento acompanha a economia.' },
+    supermercado: { nome: 'Supermercados', sens: 0.4, mult: 0.95, tags: ['consumo', 'varejo'], f: { consumo: 0.5, mercado: 0.4, agro: 0.2 }, explica: 'Comida todo mundo compra: as vendas mudam pouco com a economia, mas a margem é pequena.' },
+    varejo:       { nome: 'Lojas e comércio', sens: 1.3, mult: 0.9, tags: ['varejo'], f: { consumo: 1.4, varejo: 1, juros: -1.2, mercado: 0.9 }, explica: 'Vende mais quando o crédito está barato e o consumo aquecido.' },
+    servicos:     { nome: 'Serviços', sens: 0.8, mult: 1.0, tags: [], f: { consumo: 0.8, mercado: 0.5 }, explica: 'Serviços para casas e empresas. Na crise, parte dos clientes corta gastos.' },
+    automotivo:   { nome: 'Automotivo', sens: 0.9, mult: 0.95, tags: ['locacao'], f: { consumo: 0.7, credito: 0.5, petroleo: -0.3, juros: -0.6 }, explica: 'Carros e motos dependem de crédito: juros altos atrapalham.' },
+    tecnologia:   { nome: 'Tecnologia', sens: 0.6, mult: 1.3, tags: [], f: { mercado: 1.0, eua: 0.3, juros: -0.6 }, explica: 'Contratos e assinaturas dão receita previsível, e o mercado paga caro por empresas de tecnologia.' },
+    industria:    { nome: 'Indústria', sens: 1.0, mult: 1.0, tags: ['industria'], f: { industria: 1, dolar: 0.4, mercado: 0.8, china: 0.2 }, explica: 'Depende de encomendas das outras empresas, que caem quando a economia esfria.' },
+    saude:        { nome: 'Saúde', sens: 0.3, mult: 1.15, tags: ['saude'], f: { saude: 1, consumo: 0.3, mercado: 0.5 }, explica: 'As pessoas cuidam da saúde em qualquer fase da economia: é um setor defensivo.' },
+    educacao:     { nome: 'Educação', sens: 0.5, mult: 1.05, tags: [], f: { consumo: 0.5, mercado: 0.5, credito: 0.3 }, explica: 'As famílias cortam outras despesas antes da escola dos filhos.' },
+    construcao:   { nome: 'Construção', sens: 1.6, mult: 0.85, tags: [], f: { construcao: 1.2, juros: -1.5, imoveis: 0.6, credito: 0.4, mercado: 0.9 }, explica: 'Sofre muito com juros altos, porque obras e imóveis dependem de financiamento.' },
+    logistica:    { nome: 'Transporte e logística', sens: 1.0, mult: 0.95, tags: [], f: { logistica: 1, petroleo: -0.6, varejo: 0.4, industria: 0.4, mercado: 0.7 }, explica: 'Leva o que os outros vendem: acompanha a economia e sofre com o diesel caro.' },
+    turismo:      { nome: 'Turismo e hotelaria', sens: 1.2, mult: 1.0, tags: [], f: { consumo: 1.0, aviao: 0.6, dolar: -0.3, mercado: 0.6 }, explica: 'Viagem é das primeiras coisas que as famílias cortam na crise.' },
+    imobiliario:  { nome: 'Shoppings e imóveis', sens: 0.7, mult: 1.1, tags: [], f: { consumo: 0.6, shopping: 1, imoveis: 0.6, juros: -0.8, mercado: 0.6 }, explica: 'Vive dos aluguéis das lojas, que acompanham a inflação.' },
+    agro:         { nome: 'Agronegócio', sens: 0.5, mult: 0.95, tags: [], f: { agro: 1, dolar: 0.6, china: 0.4, petroleo: 0.3 }, explica: 'Vende muito para fora: ganha quando o dólar sobe e a China compra.' },
+    energia:      { nome: 'Energia', sens: 0.2, mult: 1.15, tags: ['energia'], f: { energia: 1, juros: -0.8, mercado: 0.4 }, explica: 'Contratos longos e receita estável, mas obras muito caras.' },
+    midia:        { nome: 'Mídia e comunicação', sens: 1.0, mult: 0.9, tags: ['telecom'], f: { consumo: 0.6, mercado: 0.7, telecom: 0.3 }, explica: 'Vive de anúncios, que as empresas cortam quando a economia esfria.' }
 };
-// Faturamento mensal em reais de 2026 (corrigido pela inflação depois).
-const PORTES_EMPRESA = [
-    { nome: 'Microempresa', receita: 12000, peso: 30 },
-    { nome: 'Pequena empresa', receita: 35000, peso: 30 },
-    { nome: 'Média empresa', receita: 110000, peso: 20 },
-    { nome: 'Empresa grande', receita: 320000, peso: 12 },
-    { nome: 'Empresa de grande porte', receita: 1200000, peso: 6 },
-    { nome: 'Grupo empresarial', receita: 4000000, peso: 2 }
-];
-const CAPITAIS_STARTUP = [60000, 150000, 400000]; // em reais de 2026
-const MAX_EMPRESAS = 4;
-const TETO_STARTUP = 2.5;      // a startup não vende mais que 3 vezes o seu custo fixo por mês
+
+const PORTES = { micro: 'Microempresa', pequena: 'Pequena empresa', media: 'Média empresa', grande: 'Grande empresa', grupo: 'Grupo empresarial' };
+
+// Os 50 negócios. Valores em MIL reais de 2026, por unidade madura (loja, equipe, fábrica...):
+// investimento para abrir, faturamento por mês, imposto e insumos (partes do faturamento), salários com encargos,
+// funcionários, aluguel e outras despesas (energia, água, contador, manutenção, propaganda) por mês,
+// e o máximo de unidades. Micro e pequenos podem ser abertos do zero; grandes e grupos só se compram prontos.
+const NEGOCIOS = {};
+const LISTA_NEGOCIOS = [];
+function negocio(id, nome, porte, setor, inv, receita, imposto, insumos, folha, func, aluguel, outros, max, un, explica, venda) {
+    const t = {
+        id, nome, porte, setor, imposto, insumos, func, max, explica, un: un.split('/'),
+        inv: inv * 1000, receita: receita * 1000, folha: folha * 1000, aluguel: aluguel * 1000, outros: outros * 1000,
+        simples: porte === 'micro' || porte === 'pequena', // começam no Simples Nacional, cuja alíquota sobe com o faturamento
+        abre: porte === 'micro' || porte === 'pequena' || porte === 'media',
+        venda: venda || (porte === 'micro' ? [1, 1] : porte === 'pequena' ? [1, 2] : [1, 3]) // unidades das empresas à venda
+    };
+    NEGOCIOS[id] = t;
+    LISTA_NEGOCIOS.push(t);
+}
+
+negocio('jardinagem', 'Jardinagem e paisagismo', 'micro', 'servicos', 45, 14, 0.06, 0.12, 4.4, 2, 0, 1.8, 15, 'equipe/equipes', 'Corta grama, poda e cuida de jardins de casas e condomínios. Precisa de uma caminhonete usada e de equipamentos, mas não paga aluguel de loja.');
+negocio('marmitaria', 'Marmitaria', 'micro', 'alimentacao', 70, 38, 0.06, 0.40, 8, 3, 2.5, 2.8, 30, 'cozinha/cozinhas', 'Cozinha que prepara marmitas e entrega no bairro e pelos aplicativos, que ficam com uma parte de cada pedido.');
+negocio('oficina_moto', 'Oficina de motos', 'micro', 'automotivo', 40, 24, 0.06, 0.38, 4.6, 2, 2, 1.6, 10, 'oficina/oficinas', 'Conserta e faz revisão de motos. Boa parte do que cobra é o preço das peças.');
+negocio('lava_rapido', 'Lava-rápido', 'micro', 'automotivo', 60, 22, 0.06, 0.10, 6.6, 3, 3, 2.6, 12, 'unidade/unidades', 'Lava carros por dentro e por fora. Gasta pouco com produtos, mas precisa de gente e de um ponto bem localizado.');
+negocio('salao', 'Salão de beleza', 'micro', 'servicos', 55, 30, 0.06, 0.48, 2.3, 1, 3.2, 2.2, 15, 'salão/salões', 'Corte, cor e unhas. Cabeleireiras e manicures ficam com uma comissão de cada serviço, além dos produtos usados.');
+negocio('food_truck', 'Food truck de lanches', 'micro', 'alimentacao', 110, 32, 0.06, 0.38, 4.6, 2, 0.8, 3.2, 8, 'truck/trucks', 'Um caminhão-cozinha que vende lanches em eventos e pontos movimentados. Quase não paga aluguel, mas gasta com gás, combustível e licenças.');
+negocio('confeitaria', 'Confeitaria de encomendas', 'micro', 'alimentacao', 18, 12, 0.06, 0.36, 2.3, 1, 0, 1.4, 10, 'cozinha/cozinhas', 'Bolos e doces por encomenda, feitos numa cozinha caseira. Custa pouco para começar, mas depende muito do trabalho do dono.');
+negocio('banho_tosa', 'Banho e tosa de pets', 'micro', 'servicos', 55, 19, 0.06, 0.12, 6.5, 2, 2.5, 1.6, 12, 'unidade/unidades', 'Dá banho, tosa e cuida da aparência de cães e gatos. Clientes fiéis voltam todo mês.');
+negocio('celulares', 'Assistência técnica de celulares', 'micro', 'tecnologia', 22, 17, 0.06, 0.36, 2.4, 1, 2, 1.2, 12, 'loja/lojas', 'Troca telas e baterias e conserta celulares. As peças são a maior despesa.');
+negocio('limpeza', 'Limpeza de casas e escritórios', 'micro', 'servicos', 30, 26, 0.06, 0.07, 16, 6, 0.6, 1.6, 20, 'equipe/equipes', 'Equipes de limpeza que atendem casas e escritórios. Quase todo o custo é o salário das funcionárias.');
+negocio('eletricista', 'Serviços elétricos e manutenção', 'micro', 'construcao', 45, 26, 0.06, 0.30, 8.5, 2, 0, 2.2, 15, 'equipe/equipes', 'Instalações elétricas, quadros de energia e manutenção de prédios. Precisa de uma van, ferramentas e gente com curso técnico.');
+negocio('hamburgueria', 'Hamburgueria delivery', 'micro', 'alimentacao', 75, 48, 0.06, 0.44, 10.5, 4, 3.5, 3.6, 25, 'cozinha/cozinhas', 'Hambúrgueres para entrega. Vende bastante, mas carne, pão e a taxa dos aplicativos levam quase metade do faturamento.');
+negocio('costura', 'Ateliê de costura e ajustes', 'micro', 'servicos', 14, 10, 0.06, 0.10, 2.3, 1, 1.5, 0.9, 8, 'ateliê/ateliês', 'Barras, ajustes e consertos de roupas. Barato de abrir e com pouca concorrência no bairro.');
+negocio('acai', 'Loja de açaí', 'micro', 'alimentacao', 65, 36, 0.06, 0.40, 6.9, 3, 3.8, 3, 25, 'loja/lojas', 'Açaí e sorvetes no copo. Vende muito no calor e precisa de um ponto com movimento.');
+
+negocio('restaurante', 'Restaurante self-service', 'pequena', 'alimentacao', 280, 150, 0.08, 0.40, 36, 12, 11, 13, 15, 'restaurante/restaurantes', 'Comida a quilo no almoço. Precisa de cozinha grande, muita gente e um bom ponto.');
+negocio('padaria', 'Padaria e confeitaria', 'pequena', 'alimentacao', 420, 190, 0.08, 0.46, 42, 14, 12, 16, 12, 'padaria/padarias', 'Pães, frios e café da manhã. Funciona o dia inteiro e tem margem apertada.');
+negocio('oficina_mecanica', 'Oficina mecânica de carros', 'pequena', 'automotivo', 200, 95, 0.08, 0.38, 23, 6, 7.5, 6.5, 10, 'oficina/oficinas', 'Mecânica, suspensão e revisões. Elevadores e ferramentas custam caro, e as peças são boa parte da conta.');
+negocio('academia', 'Academia de ginástica', 'pequena', 'saude', 550, 125, 0.08, 0.03, 32, 10, 28, 30, 15, 'academia/academias', 'Mensalidades de alunos. Os aparelhos custam caro, e o aluguel de um espaço grande também.');
+negocio('minimercado', 'Minimercado de bairro', 'pequena', 'supermercado', 320, 230, 0.07, 0.675, 26, 9, 8.5, 10.5, 20, 'loja/lojas', 'Vende de tudo um pouco perto de casa. Fatura muito, mas quase tudo é o custo da mercadoria: a margem é pequena.');
+negocio('farmacia', 'Farmácia', 'pequena', 'saude', 480, 260, 0.07, 0.66, 31, 8, 10, 10, 25, 'loja/lojas', 'Remédios e produtos de higiene. As pessoas compram mesmo com a economia ruim.');
+negocio('idiomas', 'Escola de idiomas', 'pequena', 'educacao', 220, 90, 0.08, 0.08, 46, 10, 8, 7.5, 15, 'escola/escolas', 'Cursos de inglês e espanhol. O maior custo são os professores.');
+negocio('odonto', 'Clínica odontológica', 'pequena', 'saude', 380, 120, 0.10, 0.18, 50, 9, 8.5, 10.5, 12, 'clínica/clínicas', 'Consultórios com dentistas e auxiliares. Equipamentos caros, mas clientes que voltam sempre.');
+negocio('marcenaria', 'Marcenaria de móveis planejados', 'pequena', 'construcao', 270, 110, 0.08, 0.42, 27, 7, 6.5, 7.5, 8, 'fábrica/fábricas', 'Cozinhas e armários sob medida. Vende mais quando as pessoas compram e reformam casas.');
+negocio('transportadora', 'Transportadora com 3 caminhões', 'pequena', 'logistica', 950, 190, 0.08, 0.36, 32, 5, 5, 48, 15, 'frota/frotas', 'Leva cargas para outras empresas. Diesel, pedágio, pneus e o desgaste dos caminhões custam caro.');
+negocio('reformas', 'Empreiteira de reformas', 'pequena', 'construcao', 120, 160, 0.10, 0.56, 32, 8, 3, 6.5, 10, 'equipe/equipes', 'Reforma casas e lojas. Barato de abrir, mas material e terceirizados levam mais da metade do faturamento, e as obras somem quando os juros sobem.');
+negocio('agencia', 'Agência de marketing digital', 'pequena', 'servicos', 100, 85, 0.10, 0.10, 48, 7, 4, 6.5, 6, 'equipe/equipes', 'Cuida das redes sociais e dos anúncios de outras empresas. O custo é quase todo de salários.');
+negocio('roupas', 'Loja de roupas', 'pequena', 'varejo', 220, 105, 0.08, 0.50, 13, 4, 13, 8.5, 30, 'loja/lojas', 'Roupas da moda no shopping. Aluguel caro e estoque que precisa girar.');
+negocio('pizzaria', 'Pizzaria com delivery', 'pequena', 'alimentacao', 190, 115, 0.08, 0.44, 26, 9, 7, 9, 20, 'pizzaria/pizzarias', 'Salão e entregas à noite. O forno e os motoboys fazem parte do custo.');
+
+negocio('supermercado', 'Supermercado', 'media', 'supermercado', 4200, 2000, 0.10, 0.68, 190, 60, 65, 85, 30, 'loja/lojas', 'Um supermercado completo. Fatura milhões, mas fica com só 2 ou 3 centavos de cada real vendido.');
+negocio('hotel', 'Hotel', 'media', 'turismo', 9000, 650, 0.10, 0.12, 190, 55, 0, 130, 15, 'hotel/hotéis', 'Hotel de cidade para quem viaja a trabalho e a passeio. O prédio é caro, mas é próprio.');
+negocio('confeccao', 'Confecção de roupas', 'media', 'industria', 1600, 750, 0.10, 0.46, 185, 55, 28, 60, 10, 'fábrica/fábricas', 'Fábrica que costura roupas para lojas. Tecido e costureiras são os maiores custos.');
+negocio('clinica', 'Clínica médica e laboratório', 'media', 'saude', 2600, 950, 0.12, 0.20, 420, 70, 42, 90, 20, 'clínica/clínicas', 'Consultas, exames e laboratório. Médicos e equipamentos custam caro, mas a procura é estável.');
+negocio('escola', 'Escola particular', 'media', 'educacao', 4500, 850, 0.10, 0.05, 460, 80, 65, 85, 15, 'escola/escolas', 'Do infantil ao ensino médio. As mensalidades pagam principalmente os professores.');
+negocio('biscoitos', 'Fábrica de biscoitos e massas', 'media', 'industria', 3200, 1300, 0.12, 0.53, 210, 60, 32, 90, 8, 'fábrica/fábricas', 'Produz biscoitos e macarrão para supermercados. Trigo e açúcar são a maior despesa.');
+negocio('distribuidora', 'Distribuidora de bebidas', 'media', 'logistica', 2200, 2600, 0.10, 0.78, 125, 35, 26, 65, 10, 'centro/centros', 'Compra bebidas das fábricas e entrega em bares e mercados. Muito volume e pouca margem.');
+negocio('motos', 'Concessionária de motos', 'media', 'automotivo', 2600, 2100, 0.08, 0.80, 85, 25, 32, 52, 15, 'loja/lojas', 'Vende motos novas e faz revisões. Depende do crédito: com juros altos, vende menos.');
+negocio('software', 'Empresa de software por assinatura', 'media', 'tecnologia', 2200, 650, 0.12, 0.10, 345, 40, 22, 65, 6, 'produto/produtos', 'Programas que as empresas pagam todo mês. Quase todo o custo é de programadores.');
+negocio('construtora', 'Construtora de prédios residenciais', 'media', 'construcao', 5500, 2200, 0.08, 0.69, 260, 90, 16, 65, 10, 'obra/obras', 'Constrói e vende apartamentos. Lucra bem com juros baixos e sofre muito quando eles sobem.');
+
+negocio('rede_super', 'Rede de supermercados', 'grande', 'supermercado', 9000, 4500, 0.10, 0.69, 380, 110, 130, 160, 80, 'loja/lojas', 'Dezenas de supermercados grandes. Compra em quantidade e negocia preços melhores.', [10, 30]);
+negocio('rede_farma', 'Rede de farmácias', 'grande', 'saude', 600, 420, 0.07, 0.66, 52, 12, 26, 22, 400, 'loja/lojas', 'Uma rede com farmácias em várias cidades.', [40, 150]);
+negocio('hospitais', 'Rede de hospitais particulares', 'grande', 'saude', 60000, 14000, 0.12, 0.26, 5800, 1200, 0, 2000, 20, 'hospital/hospitais', 'Hospitais com pronto-socorro, cirurgias e UTI. Muito caros de construir, e a procura quase não cai.', [1, 4]);
+negocio('faculdade', 'Faculdade particular', 'grande', 'educacao', 25000, 6500, 0.10, 0.05, 3300, 450, 320, 950, 40, 'campus/campi', 'Cursos de graduação presenciais e a distância.', [2, 8]);
+negocio('transp_nac', 'Transportadora nacional', 'grande', 'logistica', 12000, 3200, 0.10, 0.40, 650, 140, 65, 620, 60, 'filial/filiais', 'Centenas de caminhões levando cargas por todo o país.', [6, 20]);
+negocio('autopecas', 'Fábrica de autopeças', 'grande', 'industria', 60000, 16000, 0.14, 0.56, 2600, 700, 0, 1100, 8, 'fábrica/fábricas', 'Faz peças para as montadoras de carros. Depende de quantos carros o país produz.', [1, 3]);
+negocio('incorporadora', 'Incorporadora imobiliária', 'grande', 'construcao', 40000, 11000, 0.07, 0.66, 1300, 300, 60, 600, 20, 'regional/regionais', 'Lança bairros e prédios inteiros. Os lucros sobem e descem com os juros.', [2, 6]);
+
+negocio('shoppings', 'Grupo de shopping centers', 'grupo', 'imobiliario', 400000, 9000, 0.12, 0.06, 900, 150, 0, 2600, 30, 'shopping/shoppings', 'Dono de shoppings inteiros: ganha com o aluguel das lojas e com o estacionamento.', [4, 10]);
+negocio('usinas', 'Grupo de usinas de açúcar e etanol', 'grupo', 'agro', 300000, 45000, 0.10, 0.55, 6500, 1800, 900, 6000, 15, 'usina/usinas', 'Planta cana e produz açúcar e etanol. Lucra mais quando o dólar e o petróleo sobem.', [2, 6]);
+negocio('solar', 'Grupo de energia solar', 'grupo', 'energia', 250000, 5200, 0.09, 0.02, 220, 40, 320, 2600, 40, 'parque/parques', 'Parques solares que vendem energia com contratos longos. Receita muito estável.', [5, 15]);
+negocio('midia', 'Grupo de comunicação', 'grupo', 'midia', 150000, 22000, 0.12, 0.15, 9000, 1200, 400, 5500, 12, 'emissora/emissoras', 'TV, rádio e sites de notícias. Vive de anúncios, que caem quando a economia esfria.', [3, 8]);
+negocio('resorts', 'Grupo hoteleiro de resorts', 'grupo', 'turismo', 200000, 9500, 0.10, 0.14, 3300, 700, 0, 2300, 25, 'resort/resorts', 'Resorts de praia e de serra. Lotam nas férias e sofrem quando as famílias apertam o cinto.', [4, 12]);
+
+// Nomes inventados para as empresas, como "Marmitaria Primavera".
+const NOMES_FANTASIA = ['Primavera', 'Bom Gosto', 'Central', 'Estrela', 'do Vale', 'Nova Era', 'Sol Nascente', 'Horizonte', 'Boa Vista', 'Ipê',
+    'Aurora', 'Ponto Certo', 'Vitória', 'Capital', 'Litoral', 'Serra Azul', 'Bem-Te-Vi', 'Jacarandá', 'Girassol', 'Rio Claro', 'Monte Verde', 'Esperança'];
+
+const MAX_EMPRESAS = 5;              // empresas fora da bolsa ao mesmo tempo
+const RAMPA_INICIAL = 0.45;          // uma unidade nova começa vendendo 45% do que venderá madura
+const RAMPA_MES = 0.15;              // e a cada mês anda 15% do que falta (uns 6 meses até deixar de dar prejuízo)
+const MESES_DE_GIRO = 3;             // o capital de giro paga 3 meses de custos fixos enquanto a clientela cresce
+const RECEITA_MAX_DONO = 300000;     // faturamento máximo por mês (reais de 2026) de uma empresa que uma pessoa consegue administrar
+const BONUS_DONO = 0.05;             // com o dono presente, a empresa vende 5% a mais
+const PROB_EVENTO_EMPRESA = 0.05;    // chance por mês de algo acontecer com cada empresa sua
 const PRAZO_CHAMADA = 21;     // dias úteis para colocar dinheiro na empresa antes da falência
 const PRAZO_PROPOSTAS = 21;   // dias úteis de validade das propostas de compra
-const CUSTO_ABERTURA = 0.03;  // advogado, contador e registro, na abertura
 const IR_VENDA_EMPRESA = 0.15;
+
+// Coisas que acontecem com as suas empresas. mercado = mudança na clientela (volta ao normal aos poucos);
+// custo = gasto que sai do caixa da empresa: parte do investimento de uma unidade (inv), meses de salários (folha) ou do faturamento (receita).
+const EVENTOS_EMPRESA = [
+    { t: 'Um cliente grande fechou contrato com {e}', mercado: 0.08, peso: 3, p: 'Clientes grandes trazem vendas por meses. Por outro lado, depender demais de um só cliente é um risco.' },
+    { t: '{e} viralizou nas redes sociais', mercado: 0.12, peso: 2, p: 'Um vídeo fez muita gente conhecer a empresa. O movimento cresce agora, mas parte dele some quando a novidade passa.' },
+    { t: 'Um concorrente de {e} fechou as portas', mercado: 0.10, peso: 2, p: 'Os clientes do concorrente procuram outro lugar, e parte deles vem para você.' },
+    { t: '{e} ganhou o prêmio de melhor da cidade no seu ramo', mercado: 0.05, peso: 2, p: 'Boa fama atrai clientes, mas sozinha muda pouco as contas.' },
+    { t: 'Um concorrente abriu bem perto de {e}', mercado: -0.10, peso: 4, p: 'Os clientes agora têm outra opção, e as vendas caem. Com o tempo a empresa recupera parte deles.' },
+    { t: 'Reclamações na internet mancharam a fama de {e}', mercado: -0.08, peso: 3, p: 'Os clientes leem as avaliações antes de comprar. Atender bem é parte do negócio.' },
+    { t: 'Um funcionário importante de {e} pediu demissão', mercado: -0.05, peso: 3, p: 'Perder quem conhece o trabalho atrapalha até o substituto aprender.' },
+    { t: 'Um equipamento importante de {e} quebrou', custo: { inv: 0.08 }, peso: 3, p: 'Máquinas quebram. Por isso a empresa guarda uma reserva no caixa.' },
+    { t: 'Um ex-funcionário processou {e} na Justiça do Trabalho', custo: { folha: 1 }, peso: 2, p: 'Quando a empresa não cumpre todas as regras do trabalho, o funcionário pode cobrar na Justiça.' },
+    { t: 'A fiscalização multou {e}', custo: { receita: 0.12 }, peso: 2, p: 'Alvarás, notas fiscais e regras sanitárias precisam estar em dia, ou a multa vem.' }
+];
 const COMPRADORES = [
     { nome: 'Investidor estratégico', k: 1.15, texto: 'Quer somar a empresa ao próprio negócio e paga mais.' },
     { nome: 'Fundo de private equity', k: 1.00, texto: 'Compra para melhorar e revender, e paga o valor justo.' },
@@ -250,16 +361,7 @@ const COMPRADORES = [
 ];
 
 /* ---------- IPO: abrir o capital da empresa na bolsa ---------- */
-const LUCRO_MIN_IPO = 1500000;      // lucro anual mínimo, em reais de 2026
+const LUCRO_MIN_IPO = 10000000;     // lucro anual mínimo, em reais de 2026
 const FLOATS_IPO = [0.2, 0.3, 0.4]; // parte da empresa vendida ao público; você fica com o resto
 const TAXA_IPO = 0.05;              // bancos e advogados que organizam a oferta
 const PRECO_ALVO_ACAO = 20;         // preço de uma ação quando a empresa vale o que se estima
-// Como cada setor reage às notícias depois que a empresa vira ação.
-const PERFIS_LISTADA = {
-    alimentacao: { tags: ['consumo'], f: { consumo: 1.0, mercado: 0.9, juros: -0.3 } },
-    varejo:      { tags: ['varejo'], f: { consumo: 1.4, varejo: 1, juros: -1.5, mercado: 1.1 } },
-    servicos:    { tags: [], f: { mercado: 1.0, eua: 0.3, juros: -0.6 } },
-    industria:   { tags: ['industria'], f: { industria: 1, dolar: 0.4, mercado: 0.9 } },
-    saude:       { tags: ['saude'], f: { saude: 1, consumo: 0.4, mercado: 0.6 } },
-    construcao:  { tags: [], f: { construcao: 1.2, juros: -1.5, imoveis: 0.5, credito: 0.3, mercado: 1.0 } }
-};

@@ -178,6 +178,8 @@ const fmtPct = (v, sinal = true) => (sinal && v > 0 ? '+' : '') + fmtNum(v * 100
 const classe = v => (v > 0 ? 'sobe' : v < 0 ? 'desce' : '');
 const fmtData = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
 const unidade = id => (ATIVOS[id].tipo === 'acao' ? 'ações' : 'cotas');
+// Com a inflação, os preços sobem ano a ano. Isto mostra quanto um valor de hoje valeria no começo do jogo.
+const emDinheiroDeHoje = v => `Em dinheiro de ${dataDoDia(0).getFullYear()}, isso seria uns ${fmtBRL(v / estado.indicePrecos)}: a diferença é a inflação.`;
 
 /* ---------- Taxas reais ---------- */
 // Partem dos valores reais do Banco Central e mudam com as notícias de juros e inflação do jogo.
@@ -188,7 +190,9 @@ const mensalPoupanca = () => (selic() > 0.085 ? 0.005 : 0.7 * selic() / 12);
 const cdi = () => selic() - 0.001;
 // O perfil do governo muda o juro "de equilíbrio" e a inflação para onde a economia tende no longo prazo.
 const juroNeutro = () => JURO_REAL_NEUTRO + (estado.governo === 'populista' ? 0.015 : estado.governo === 'mercado' ? -0.01 : 0);
-const ancoraInflacao = () => (estado.governo === 'populista' ? 0.052 : estado.governo === 'mercado' ? 0.035 : 0.04);
+// Para onde a inflação tende no longo prazo. Mais perto da meta de 3% do que antes, para os preços não dispararem
+// em jogos longos (antes, 40 anos de jogo deixavam tudo 4,4 vezes mais caro).
+const ancoraInflacao = () => (estado.governo === 'populista' ? 0.045 : estado.governo === 'mercado' ? 0.03 : 0.035);
 // Durante a campanha eleitoral a bolsa oscila mais, e cada vez mais perto do dia da votação.
 const volEleitoral = () => (estado && estado.campanha && estado.proximaEleicao
     ? 1 + 0.4 * limitar(1 - (estado.proximaEleicao - estado.dia) / DIAS_CAMPANHA, 0, 1) : 1);
@@ -307,7 +311,7 @@ function variacao(id, dias) {
 }
 
 function patrimonioAtual() {
-    let total = estado.caixa + estado.proventos;
+    let total = estado.caixa + estado.proventos + (estado.fgts || 0);
     for (const id in estado.acoes) total += estado.acoes[id].qtd * preco(id);
     for (const lote of estado.lotes) total += valorMercado(lote);
     total += patrimonioBens() + patrimonioEmpresas();
@@ -371,6 +375,7 @@ function passarDia() {
     verificarEmpresas();
     if (estado.carreira && !estado.mercadoFechado && dia > 126 && Math.random() < PROB_CISNE_DIA) cisneNegro();
     if (estado.carreira && dia > 30 && Math.random() < PROB_IMPREVISTO_DIA * multImprevistos()) imprevisto();
+    if (estado.desemprego && estado.desemprego.buscando && dia - estado.desemprego.ultimaBusca >= 5) buscarVagas();
     if (dia >= estado.proximaNoticia) {
         gerarNoticia();
         estado.proximaNoticia = dia + 15 + Math.floor(Math.random() * 13);
@@ -458,13 +463,19 @@ function avancar(dias) {
 // estado.velocidade: 0 = pausado, 1, 2, 3 ou 4 = quantas vezes mais rápido que o normal (1 dia útil a cada 1 minuto).
 const segundosPorDia = () => SEGUNDOS_POR_DIA / estado.velocidade;
 
-// O tempo só anda com o jogo aberto e na tela. Um salto de mais de 10 segundos significa
-// que o app estava fechado ou o computador dormiu: esse tempo é descartado.
+// O tempo do jogo continua mesmo com o app fechado, na velocidade escolhida (pausado, ele não anda).
+// Um salto de mais de 10 segundos significa que o app estava fechado ou em segundo plano: os dias que
+// passaram são calculados de uma vez na volta, até no máximo 1 ano do jogo por ausência.
+const MAX_DIAS_FORA = 252;
+let calculandoFora = false; // enquanto calcula o tempo fora, as ofertas de emprego não vencem
+let voltouAgora = false;    // o resumo da ausência já foi mostrado: o tique não mostra outro aviso por cima
 function relogio() {
+    if (document.hidden) return 0; // em segundo plano o tempo fica para ser contado na volta
     const agora = Date.now();
     const passou = agora - estado.ultimoTick;
     estado.ultimoTick = agora;
-    if (!estado.velocidade || document.hidden || passou > 10000) return 0;
+    if (!estado.velocidade || passou <= 0) return 0;
+    if (passou > 10000) return tempoFora(passou);
     estado.acumulado += passou / 1000;
     const spd = segundosPorDia();
     let dias = 0;
@@ -474,6 +485,48 @@ function relogio() {
         dias++;
     }
     return dias;
+}
+
+function tempoFora(ms) {
+    const spd = segundosPorDia();
+    const total = estado.acumulado + ms / 1000;
+    let dias = Math.floor(total / spd);
+    estado.acumulado = total - dias * spd;
+    const limitado = dias > MAX_DIAS_FORA;
+    if (limitado) {
+        dias = MAX_DIAS_FORA;
+        estado.acumulado = 0;
+    }
+    if (!dias) return 0;
+    const antes = { dia: estado.dia, patrimonio: patrimonioAtual(), caixa: estado.caixa };
+    calculandoFora = true;
+    let resgatado = 0;
+    for (let i = 0; i < dias; i++) {
+        passarDia();
+        resgatado += pilotoAutomatico();
+    }
+    calculandoFora = false;
+    if (resgatado > 0.005) registrar(`Enquanto você estava fora, ${fmtBRL(resgatado)} de renda fixa foram resgatados para o seu saldo não ficar no vermelho (os juros do cheque especial são altíssimos)`, 0);
+    // As ofertas de emprego que chegaram enquanto você estava fora ainda dão tempo de responder.
+    if (estado.desemprego) estado.desemprego.ofertas.forEach(o => (o.ate = Math.max(o.ate, estado.dia + DIAS_OFERTA)));
+    const depois = patrimonioAtual();
+    const noticias = estado.noticias.filter(n => n.dia > antes.dia).length;
+    const doMeu = estado.noticias.filter(n => n.dia > antes.dia && n.suas).length;
+    registrar(`Enquanto você estava fora, passaram ${dias} dias úteis no jogo`, 0);
+    mostrarToast(`<b>Enquanto você estava fora</b>, o jogo andou ${dias} dias úteis (até ${dataDoDia(estado.dia).toLocaleDateString('pt-BR')}).` +
+        `<br>Seu patrimônio foi de ${fmtBRL(antes.patrimonio)} para <b class="${classe(depois - antes.patrimonio)}">${fmtBRL(depois)}</b>.` +
+        (noticias ? `<br>Saíram <b>${noticias} notícia${noticias > 1 ? 's' : ''}</b>${doMeu ? `, ${doMeu} sobre o que é seu` : ''}: veja na aba Notícias.` : '') +
+        (limitado ? '<br>O jogo calcula no máximo 1 ano de cada vez que você fica fora.' : ''), depois >= antes.patrimonio ? 'ok' : 'erro', 15000);
+    voltouAgora = true;
+    salvar();
+    return dias;
+}
+
+// Com você fora, o jogo cobre com o seu saldo as chamadas de capital das suas empresas, para não irem à falência sem você ver,
+// e resgata renda fixa (a reserva de emergência) se o saldo ficar negativo. Devolve quanto foi resgatado.
+function pilotoAutomatico() {
+    for (const e of privadas().filter(x => x.prazo && x.caixa < 0)) injetarCapital(e.uid, chamadaValor(e), true);
+    return estado.caixa < -0.005 ? sacarReserva(-estado.caixa) : 0;
 }
 
 function atualizarContagem() {
@@ -503,7 +556,9 @@ function tique() {
         // Grava a cada dia do jogo que passa (no máximo a cada 5 segundos), e sempre ao sair ou operar.
         if (Date.now() - ultimoSalvo > 5000) salvar();
         renderPendente = true;
-        if (estado.noticias[0] !== topoNoticias) {
+        if (voltouAgora) {
+            voltouAgora = false;
+        } else if (estado.noticias[0] !== topoNoticias) {
             mostrarNoticia(estado.noticias[0]);
         } else {
             const novos = [];
@@ -526,7 +581,8 @@ function tique() {
 }
 
 /* ---------- Notícias e resultados ---------- */
-const ROTULO_NOTICIA = { empresa: 'Empresa', setor: 'Setor', economia: 'Economia', resultado: 'Resultados', rumor: 'Rumor', cisne: 'Cisne negro' };
+const ROTULO_NOTICIA = { empresa: 'Empresa', setor: 'Setor', economia: 'Economia', resultado: 'Resultados', rumor: 'Rumor', cisne: 'Cisne negro', suaempresa: 'Sua empresa', vida: 'Sua vida' };
+const FORCA_NOTICIAS = 1.4; // as notícias mexem 40% mais nos preços do que antes, para fazer diferença para quem acompanha
 const ACOES = ORDEM.filter(id => ATIVOS[id].tipo === 'acao');
 const CRESCIMENTO_LUCRO = 0.08;
 const sorteio = lista => lista[Math.floor(Math.random() * lista.length)];
@@ -538,10 +594,11 @@ function sensibilidade(id, fator) {
 }
 
 // A notícia nunca é garantida: a força varia, parte do efeito acontece na hora (salto)
-// e o resto ao longo de semanas. Em 15% das vezes "o mercado já esperava" e o preço volta.
+// e o resto ao longo de semanas, o que dá tempo de reagir a quem lê as notícias.
+// Em 15% das vezes "o mercado já esperava" e o preço volta.
 function aplicarImpacto(id, total, duracao, semReversao = false) {
     const forca = total * (0.5 + Math.random());
-    const salto = forca * Math.random() * 0.6;
+    const salto = forca * Math.random() * 0.45;
     let resto = forca - salto;
     if (!semReversao && Math.random() < 0.15) resto = -resto * 0.6; // 15% das vezes "o mercado já esperava"; num cisne negro, ninguém esperava
     if (estado.mercadoFechado) {
@@ -598,7 +655,11 @@ function publicarModelo(m, { rumor = false, tipo, cisne = false } = {}) {
     }
     const ids = Object.keys(impactos).sort((a, b) => Math.abs(impactos[b]) - Math.abs(impactos[a]));
     if (rumor && !ids.length) rumor = false;
-    const forca = rumor ? 0.7 : 1; // um boato mexe menos que um fato
+    // Notícia de assunto (não de uma empresa só) mexe também nas vendas das suas empresas. A do Copom e a do cisne negro
+    // não, porque juros e crises já chegam às empresas pela economia (conjuntura).
+    if (!m.alvo && !rumor && !cisne && m.selic == null) porque += choqueNasEmpresas(m.e);
+    const suas = ids.some(id => estado.acoes[id]) || porque.includes('Suas empresas sentem');
+    const forca = (rumor ? 0.7 : 1) * (cisne ? 1 : FORCA_NOTICIAS); // um boato mexe menos que um fato
     const precos = {};
     for (const id of ids) {
         impactos[id] *= forca;
@@ -612,11 +673,11 @@ function publicarModelo(m, { rumor = false, tipo, cisne = false } = {}) {
             tipo: 'rumor',
             titulo: 'Rumor: ' + titulo,
             porque: 'Isto ainda é só um boato, sem confirmação. O mercado reage na hora, mas pode se arrepender se for desmentido. ' + porque,
-            precos, juros
+            precos, juros, suas
         });
         return;
     }
-    registrarNoticia({ tipo: tipo || (m.alvo ? 'empresa' : m.n >= INICIO_ECONOMIA ? 'economia' : 'setor'), titulo, porque, precos, juros });
+    registrarNoticia({ tipo: tipo || (m.alvo ? 'empresa' : m.n >= INICIO_ECONOMIA ? 'economia' : 'setor'), titulo, porque, precos, juros, suas });
 }
 
 function resolverRumores() {
@@ -654,7 +715,7 @@ function agendarCopom(apos = INTERVALO_COPOM) {
 function reuniaoCopom() {
     const antes = selic();
     const inflacao = ipca();
-    const alvo = inflacao + juroNeutro() + 0.5 * (inflacao - META_INFLACAO) + normal() * 0.006;
+    const alvo = inflacao + juroNeutro() + 0.8 * (inflacao - META_INFLACAO) + normal() * 0.006;
     const dif = alvo - antes;
     const mag = Math.abs(dif);
     let passo = mag < 0.004 ? 0 : mag < 0.01 ? 0.0025 : mag < 0.02 ? 0.005 : mag < 0.03 ? 0.0075 : 0.01;
@@ -710,7 +771,7 @@ function registrarNoticia(n) {
 }
 
 function mostrarNoticia(n) {
-    mostrarToast(`<span class="selo ${n.tipo}">${ROTULO_NOTICIA[n.tipo]}</span><b>${n.titulo}</b><br><small>${n.porque}</small><br><small class="link">Clique para ver as notícias</small>`, 'noticia', 10000);
+    mostrarToast(`<span class="selo ${n.tipo}">${ROTULO_NOTICIA[n.tipo]}</span>${n.suas ? '<span class="selo voce">Mexe com o que é seu</span> ' : ''}<b>${n.titulo}</b><br><small>${n.porque}</small><br><small class="link">Clique para ver as notícias</small>`, 'noticia', 10000);
 }
 
 function resgatarProventos() {
@@ -844,7 +905,7 @@ const chaveMes = d => `${d.getFullYear()}-${d.getMonth()}`;
 
 /* ---------- Salário, custo de vida e fechamento do mês ---------- */
 const moeda = v => Math.round(v * 100) / 100;
-const cargoAtual = () => (estado.carreira ? CARREIRAS[estado.carreira.trilha].cargos[estado.carreira.nivel] : null);
+const cargoAtual = () => (empregado() ? CARREIRAS[estado.carreira.trilha].cargos[estado.carreira.nivel] : null);
 // Reajuste anual dos salários (em janeiro, junto com o salário mínimo):
 // cargos de entrada acompanham o mínimo, que é o piso por lei; cargos altos só repõem a inflação.
 // A mistura é gradual: até 2 mínimos segue o mínimo, a partir de 6 mínimos segue só a inflação.
@@ -856,10 +917,22 @@ function salarioDoCargo(valor) {
 }
 const custoDeVida = (nivel = estado.padraoVida) => moeda(PADROES_VIDA[nivel].custo * estado.indicePrecos);
 
+// Quem está sem emprego recebe o seguro-desemprego, se tiver direito.
+const parcelaSeguro = () => {
+    const s = !empregado() && estado.desemprego && estado.desemprego.seguro;
+    return s && s.parcelas > 0 ? s.valor : 0;
+};
+function rotuloOcupacao() {
+    if (!estado.carreira) return 'Sem trabalho';
+    if (empregado()) return cargoAtual()[0];
+    const dono = estado.empresas.find(e => e.dono);
+    return dono ? `Administra ${dono.nome}` : 'Sem emprego';
+}
+
 // Do bruto ao que sobra: desconta INSS e Imposto de Renda, depois o custo de vida e os custos dos bens.
 function holerite() {
     const cargo = cargoAtual();
-    const bruto = cargo ? salarioDoCargo(cargo[1]) : 0;
+    const bruto = cargo ? moeda(salarioDoCargo(cargo[1]) * (estado.carreira.fator || 1)) : 0;
     const inss = moeda(calcularINSS(bruto, estado.fatorIR));
     const irrf = moeda(calcularIRRF(bruto, inss, estado.fatorIR));
     const liquido = moeda(bruto - inss - irrf);
@@ -869,7 +942,8 @@ function holerite() {
     const custo = moeda(custoBase - economia);
     const bens = moeda(fb.iptu + fb.manut + fb.parcelas);
     const alugueis = moeda(fb.aluguel);
-    return { cargo: cargo ? cargo[0] : 'Sem trabalho', bruto, inss, irrf, liquido, custoBase, economia, custo, bens, alugueis, sobra: moeda(liquido - custo - bens + alugueis) };
+    const seguro = parcelaSeguro();
+    return { cargo: rotuloOcupacao(), bruto, inss, irrf, liquido, seguro, custoBase, economia, custo, bens, alugueis, sobra: moeda(liquido + seguro - custo - bens + alugueis) };
 }
 
 // Regra real do salário mínimo: inflação (INPC, aqui o IPCA do jogo) + crescimento do PIB,
@@ -916,25 +990,147 @@ function fecharMes() {
     }
     const h = holerite();
     const fb = fluxoBens();
-    estado.carreira.meses++;
+    const emp = empregado();
+    if (emp) {
+        estado.carreira.meses++;
+        estado.carreira.mesesEmprego = (estado.carreira.mesesEmprego || 0) + 1;
+    }
     estado.caixa += h.sobra;
     // O que entra na conta "dinheiro guardado": salário menos gastos, incluindo o que se amortizou da dívida
     // (vira patrimônio). O aluguel recebido não entra: ele é rendimento do imóvel.
-    estado.totalAportado += h.liquido - h.custo - fb.iptu - fb.manut - fb.juros;
-    registrar(`Salário de ${h.cargo}: ${fmtBRL(h.bruto)} bruto, menos INSS ${fmtBRL(h.inss)} e Imposto de Renda ${fmtBRL(h.irrf)}`, h.liquido);
+    estado.totalAportado += h.liquido + h.seguro - h.custo - fb.iptu - fb.manut - fb.juros;
+    if (emp) registrar(`Salário de ${h.cargo}: ${fmtBRL(h.bruto)} bruto, menos INSS ${fmtBRL(h.inss)} e Imposto de Renda ${fmtBRL(h.irrf)}`, h.liquido);
+    if (h.seguro) {
+        const s = estado.desemprego.seguro;
+        s.parcelas--;
+        registrar(`Seguro-desemprego: parcela ${s.total - s.parcelas} de ${s.total}`, h.seguro);
+    }
+    // FGTS: a empresa deposita 8% do bruto numa conta sua, que só pode ser sacada em casos especiais.
+    if (emp) {
+        const deposito = moeda(h.bruto * FGTS_MES);
+        estado.fgts += deposito;
+        estado.totalAportado += deposito;
+    }
+    estado.fgts *= 1 + FGTS_RENDE_MES;
+    if (!emp && estado.fgts > 0.005 && estado.desemprego && estado.dia - estado.desemprego.desde >= FGTS_LIBERA_DIAS) {
+        const saque = moeda(estado.fgts);
+        estado.caixa += saque;
+        estado.fgts = 0;
+        registrar('Saque do FGTS: depois de 3 anos sem carteira assinada, o dinheiro do FGTS foi liberado', saque);
+    }
     registrar(`Custo de vida do mês (${PADROES_VIDA[estado.padraoVida].nome})` + (h.economia > 0 ? ', já sem o que você economiza com seus bens' : ''), -h.custo);
     if (fb.parcelas > 0.005) registrar('Parcelas dos financiamentos', -fb.parcelas);
     if (fb.iptu + fb.manut > 0.005) registrar('IPTU, manutenção e custos dos seus bens', -(fb.iptu + fb.manut));
     if (fb.aluguel > 0.005) registrar('Aluguéis recebidos dos seus imóveis', fb.aluguel);
     aplicarFluxoBens();
-    if (hoje.getMonth() === 11) {
-        // O 13º paga INSS e IR separados do salário do mês.
-        const decimo = h.liquido;
+    if (emp && hoje.getMonth() === 11) {
+        // O 13º paga INSS e IR separados do salário do mês. Quem entrou no meio do ano recebe a parte proporcional.
+        const decimo = moeda((h.liquido * Math.min(12, estado.carreira.mesesEmprego)) / 12);
         estado.caixa += decimo;
         estado.totalAportado += decimo;
         registrar('13º salário! Um salário extra, já com os descontos. Hora de investir.', decimo);
     }
+    if (emp && Math.random() < riscoDemissao()) demitir();
     atualizarFelicidadeDoMes();
+}
+
+/* ---------- Emprego: demissão, seguro-desemprego e busca de vagas ---------- */
+const empregado = () => !!estado.carreira && estado.carreira.empregado !== false;
+// Chance de ser demitido por mês: maior com a economia ruim, com a felicidade baixa (rende menos no trabalho)
+// e nos 3 primeiros meses (período de experiência).
+const riscoDemissao = () => limitar(0.003 + Math.max(0, -estado.conjuntura) * 0.006 + tristeza() * 0.008 +
+    ((estado.carreira.mesesEmprego || 0) < 3 ? 0.004 : 0), 0, 0.03);
+
+// O acerto na saída. Pedindo demissão: 13º e férias proporcionais. Demitido sem justa causa: também aviso prévio,
+// saque do FGTS, multa de 40% sobre o FGTS e, com 12 meses ou mais de casa, seguro-desemprego.
+function sairDoEmprego(demitido) {
+    const h = holerite();
+    const c = estado.carreira;
+    const meses = Math.max(1, Math.min(c.mesesEmprego || 0, dataDoDia(estado.dia).getMonth() + 1));
+    const decimo = moeda((h.liquido * meses) / 12);
+    const ferias = moeda((h.liquido * meses * 4) / 36);
+    let total = decimo + ferias;
+    const partes = [`13º proporcional de ${fmtBRL(decimo)}`, `férias proporcionais com 1/3 de ${fmtBRL(ferias)}`];
+    let saqueFgts = 0;
+    let seguro = null;
+    if (demitido) {
+        const aviso = h.liquido;
+        const multa = moeda(estado.fgts * MULTA_FGTS);
+        saqueFgts = moeda(estado.fgts);
+        total += aviso + multa + saqueFgts;
+        partes.push(`aviso prévio de ${fmtBRL(aviso)}`, `saque do FGTS de ${fmtBRL(saqueFgts)}`, `multa de 40% do FGTS de ${fmtBRL(multa)}`);
+        estado.fgts = 0;
+        if ((c.mesesEmprego || 0) >= 12) {
+            const parcelas = c.mesesEmprego >= 24 ? 5 : 4;
+            seguro = { parcelas, total: parcelas, valor: moeda(limitar(0.8 * h.bruto, estado.salarioMinimo, SEGURO_TETO * estado.salarioMinimo)) };
+        }
+        mudarFelicidade(FELICIDADE_DEMITIDO);
+    }
+    total = moeda(total);
+    estado.caixa += total;
+    estado.totalAportado += total - saqueFgts; // o FGTS já tinha entrado no "dinheiro guardado" a cada depósito
+    c.empregado = false;
+    estado.desemprego = { desde: estado.dia, seguro, buscando: false, ofertas: [], ultimaBusca: estado.dia };
+    registrar((demitido ? `A empresa dispensou você do cargo de ${h.cargo} (demissão sem justa causa). Acerto: ` : `Você pediu demissão do cargo de ${h.cargo}. Acerto: `) + partes.join(', '), total);
+    return { total, seguro };
+}
+
+function demitir() {
+    const cargo = cargoAtual()[0];
+    const { total, seguro } = sairDoEmprego(true);
+    registrarNoticia({
+        tipo: 'vida', titulo: `A empresa dispensou você do cargo de ${cargo}`, suas: true, precos: {}, juros: false,
+        porque: `Demissões ficam mais comuns quando a economia vai mal e quando a pessoa anda desanimada no trabalho. Você recebeu ${fmtBRL(total)} de acerto` +
+            (seguro ? ` e vai receber ${seguro.parcelas} parcelas de ${fmtBRL(seguro.valor)} de seguro-desemprego.` : '. Como tinha menos de 12 meses no emprego, não tem direito ao seguro-desemprego.') +
+            ' Procure outro emprego na aba Vida e carreira. Enquanto isso, a reserva de emergência paga as contas.'
+    });
+}
+
+function pedirDemissao() {
+    if (!empregado()) return;
+    if (!confirm('Pedir demissão? Você recebe o 13º e as férias proporcionais, mas não recebe a multa do FGTS nem o seguro-desemprego, e o FGTS fica guardado. Sem salário, as contas saem do seu saldo.')) return;
+    const { total } = sairDoEmprego(false);
+    mostrarToast(`Você saiu do emprego e recebeu <b>${fmtBRL(total)}</b> de acerto. Agora pode procurar outro emprego ou cuidar de uma empresa sua.`, 'ok', 9000);
+    concluirOperacao();
+}
+
+// Procurando emprego: a cada semana do jogo pode chegar uma oferta. A economia aquecida ajuda; cargos altos são mais difíceis.
+function buscarVagas() {
+    const d = estado.desemprego;
+    d.ultimaBusca = estado.dia;
+    if (!calculandoFora) d.ofertas = d.ofertas.filter(o => o.ate >= estado.dia);
+    const c = estado.carreira;
+    const chance = limitar(0.22 + 0.12 * estado.conjuntura - 0.02 * c.nivel, 0.06, 0.45);
+    if (d.ofertas.length >= 3 || Math.random() > chance) return;
+    const cargos = CARREIRAS[c.trilha].cargos;
+    const x = Math.random();
+    const nivel = x < 0.25 ? Math.max(0, c.nivel - 1) : x > 0.9 ? Math.min(cargos.length - 1, c.nivel + 1) : c.nivel;
+    const o = { nivel, fator: Math.round((0.9 + Math.random() * 0.22) * 100) / 100, empresa: sorteio(EMPREGADORES), ate: estado.dia + DIAS_OFERTA };
+    d.ofertas.push(o);
+    registrarNoticia({
+        tipo: 'vida', titulo: `${o.empresa} ofereceu uma vaga de ${cargos[nivel][0]}`, suas: true, precos: {}, juros: false,
+        porque: `Salário de ${fmtBRL(salarioDaOferta(o))} por mês. A oferta vale até ${dataDoDia(o.ate).toLocaleDateString('pt-BR')}: responda na aba Vida e carreira.`
+    });
+}
+const salarioDaOferta = o => moeda(salarioDoCargo(CARREIRAS[estado.carreira.trilha].cargos[o.nivel][1]) * o.fator);
+
+function aceitarVaga(i) {
+    const d = estado.desemprego;
+    const o = d && d.ofertas[i];
+    if (!o || o.ate < estado.dia) return;
+    const c = estado.carreira;
+    const cargo = CARREIRAS[c.trilha].cargos[o.nivel][0];
+    // A experiência continua valendo: num cargo igual ou abaixo do anterior, quem já tinha experiência não começa do zero.
+    const meses = o.nivel > c.nivel ? 0 : o.nivel < c.nivel ? MESES_NO_CARGO[Math.min(o.nivel, MESES_NO_CARGO.length - 1)] : c.meses;
+    estado.carreira = { trilha: c.trilha, nivel: o.nivel, meses, mesesEmprego: 0, empregado: true, fator: o.fator };
+    estado.desemprego = null;
+    const cuidava = estado.empresas.find(e => e.dono);
+    estado.empresas.forEach(e => (e.dono = false));
+    mudarFelicidade(8);
+    registrar(`Novo emprego: ${cargo} na ${o.empresa}`, 0);
+    mostrarToast(`A ${o.empresa} contratou você como <b>${cargo}</b>, com salário de <b>${fmtBRL(salarioDaOferta(o))}</b>.` +
+        (cuidava ? ` Um gerente passa a cuidar de ${cuidava.nome}.` : ''), 'ok', 9000);
+    concluirOperacao();
 }
 
 function proximoFechamento() {
@@ -956,7 +1152,7 @@ function proximaPromocao() {
 
 function promover() {
     const p = proximaPromocao();
-    if (!p) return;
+    if (!p || !empregado()) return;
     if (p.faltam) return mostrarToast(`Você ainda precisa de mais ${p.faltam} ${p.faltam > 1 ? 'meses' : 'mês'} de experiência no cargo atual.`, 'erro');
     if (p.custo > estado.caixa + 1e-9) return mostrarToast(`O curso custa ${fmtBRL(p.custo)} e você tem ${fmtBRL(estado.caixa)} de saldo disponível.`, 'erro');
     estado.caixa -= p.custo;
@@ -971,7 +1167,9 @@ function promover() {
 function escolherCarreira(trilha) {
     const primeira = !estado.carreira;
     if (!primeira && !confirm(`Trocar de carreira para ${CARREIRAS[trilha].nome}? Você recomeça no primeiro cargo.`)) return;
-    estado.carreira = { trilha, nivel: 0, meses: 0 };
+    estado.carreira = { trilha, nivel: 0, meses: 0, mesesEmprego: 0, empregado: true, fator: 1 };
+    estado.desemprego = null;
+    estado.empresas.forEach(e => (e.dono = false));
     trocandoCarreira = false;
     const [cargo, valor] = cargoAtual();
     registrar(`Novo emprego: ${cargo} (${CARREIRAS[trilha].nome})`, 0);
@@ -1016,15 +1214,18 @@ const corFelicidade = (f = estado.felicidade) => (f >= 60 ? 'var(--verde)' : f >
 // Para onde a felicidade vai se nada mudar. Quem só guarda e quase não aproveita o salário fica com um alvo baixo.
 function alvoFelicidade() {
     const h = holerite();
+    const emp = !estado.carreira || empregado();
     const parteVida = h.liquido > 0 ? h.custoBase / h.liquido : 1;
     const partes = {
-        parteVida,
-        padrao: Math.min(75, 25 + parteVida * 75),
+        parteVida, emp,
+        // Sem salário, a conta do padrão de vida não faz sentido: o alvo fica num meio-termo.
+        padrao: emp ? Math.min(75, 25 + parteVida * 75) : 45,
         casa: moradiaAtual() ? FELICIDADE_CASA_PROPRIA : 0,
         carro: estado.bens.some(b => b.tipo === 'carro') ? FELICIDADE_CARRO : 0,
-        vermelho: estado.caixa < -0.005 ? FELICIDADE_NO_VERMELHO : 0
+        vermelho: estado.caixa < -0.005 ? FELICIDADE_NO_VERMELHO : 0,
+        desemprego: !emp && !estado.empresas.some(e => e.dono) ? FELICIDADE_DESEMPREGO : 0
     };
-    partes.alvo = limitar(partes.padrao + partes.casa + partes.carro + partes.vermelho, 0, 100);
+    partes.alvo = limitar(partes.padrao + partes.casa + partes.carro + partes.vermelho + partes.desemprego, 0, 100);
     return partes;
 }
 
@@ -1252,6 +1453,9 @@ function reabrirMercado() {
 const avisoMercadoFechado = () => mostrarToast(`A bolsa está fechada (circuit breaker) até ${dataDoDia(estado.mercadoFechado.ate).toLocaleDateString('pt-BR')}. Só dá para mexer na renda fixa.`, 'erro', 8000);
 
 /* ---------- Empresas ---------- */
+// Cada empresa é feita de unidades (lojas, equipes, fábricas...). Cada unidade tem uma qualidade q (o ponto, a equipe:
+// 1 = normal) e uma rampa r, que começa baixa e sobe até 1 enquanto a unidade nova conquista clientes.
+// A empresa só vende mais abrindo unidades novas: cada unidade tem um limite do quanto consegue atender.
 const empresaPorUid = uid => estado.empresas.find(e => e.uid === +uid);
 const privadas = () => estado.empresas.filter(e => !e.listada);
 const participacao = e => (estado.acoes[e.listada] ? estado.acoes[e.listada].qtd : 0) / e.acoesTotal;
@@ -1263,57 +1467,128 @@ const sorteioPeso = lista => {
     }
     return lista[lista.length - 1];
 };
+const tipoDa = e => e.eco || NEGOCIOS[e.tipo];
 const setorDa = e => SETORES_EMPRESA[e.setor];
+const nomeUnidades = (t, n) => `${n} ${n === 1 ? t.un[0] : t.un[1]}`;
+const qualidadeNova = (base = 1, desvio = 0.2) => limitar(base + normal() * desvio, 0.5, 1.3);
+// "Transportadora com 3 caminhões" vira "Transportadora Primavera".
+const nomeFantasia = t => `${t.nome.split(/ (?:com|por) /)[0]} ${sorteio(NOMES_FANTASIA)}`;
 // Juros altos baixam o preço de qualquer empresa: o mesmo lucro vale menos quando a renda fixa paga muito.
 const fatorJuros = () => limitar(Math.pow(0.10 / selic(), 0.8), 0.5, 1.6);
-const custoFixoNominal = e => e.custoFixo * estado.indicePrecos;
-const chamadaValor = e => moeda(-e.caixa + 2 * custoFixoNominal(e));
+
+// Gerente e administração: um salário fixo mais uma parte do faturamento (menor nas empresas grandes).
+function custoGerente(receita) {
+    const idx = estado.indicePrecos;
+    return 3000 * idx + 0.025 * Math.min(receita, 1e6 * idx) + 0.01 * Math.max(0, receita - 1e6 * idx);
+}
+
+// Vendas comparadas ao normal: a economia (conforme o setor), as notícias recentes do setor e a clientela da empresa.
+function demandaEmpresa(e) {
+    return limitar(1 + setorDa(e).sens * estado.conjuntura * 0.10 + e.choque, 0.4, 1.25) * e.mercado * (e.dono ? 1 + BONUS_DONO : 1);
+}
+
+// Simples Nacional: quanto mais a empresa fatura, maior a alíquota, e acima de R$ 4,8 milhões por ano ela sai do Simples.
+// O imposto do catálogo já é o da faixa de uma unidade. Quando a empresa cresce, a alíquota maior vale só para o que passa
+// de cada faixa, como na tabela do Simples (a alíquota efetiva sobe aos poucos, sem degrau).
+function impostosDe(t, receita) {
+    let imposto = receita * t.imposto;
+    if (!t.simples) return imposto;
+    const base = t.receita * 12;
+    const faixas = t.porte === 'micro' ? [[0.72e6, 0.01], [1.8e6, 0.01], [4.8e6, 0.02]] : [[4.8e6, 0.02]];
+    for (const [limite, a] of faixas) {
+        if (limite >= base) imposto += a * Math.max(0, receita - (limite * estado.indicePrecos) / 12);
+    }
+    return imposto;
+}
+
+// As contas do mês, em reais de hoje. madura = como se todas as unidades já estivessem maduras e a economia normal.
+function contasEmpresa(e, { madura = false, comGerente = !e.dono, demanda } = {}) {
+    const t = tipoDa(e);
+    const idx = estado.indicePrecos;
+    const d = demanda != null ? demanda : madura ? e.mercado : demandaEmpresa(e);
+    const capacidade = e.unidades.reduce((soma, u) => soma + u.q * (madura ? 1 : u.r), 0);
+    const receita = t.receita * capacidade * d * idx;
+    const impostos = impostosDe(t, receita);
+    const aliquota = receita ? impostos / receita : t.imposto;
+    const n = e.unidades.length;
+    // Ninguém está em dois lugares ao mesmo tempo: cada unidade a mais precisa de um encarregado
+    // (nas empresas médias e maiores, um gestor que custa 1% do faturamento da unidade).
+    const encarregados = (n - 1) * (t.porte === 'micro' ? 3000 : t.porte === 'pequena' ? 5000 : 0.01 * t.receita) * idx;
+    // Ganho de escala: quem tem muitas unidades compra mais barato e divide despesas como contador, sistemas e propaganda.
+    const escala = Math.log(n);
+    const c = {
+        receita, aliquota, impostos,
+        insumos: receita * (t.insumos - Math.min(0.012, 0.004 * escala)),
+        folha: t.folha * n * idx,
+        aluguel: t.aluguel * n * idx,
+        outros: t.outros * n * idx * Math.max(0.75, 1 - 0.06 * escala),
+        gerente: (comGerente ? custoGerente(receita) : 0) + encarregados,
+        funcionarios: t.func * n
+    };
+    c.fixos = c.folha + c.aluguel + c.outros + c.gerente;
+    c.lucro = c.receita - c.impostos - c.insumos - c.fixos;
+    return c;
+}
+
+const custoFixoMensal = e => contasEmpresa(e).fixos;
+const chamadaValor = e => moeda(-e.caixa + 2 * custoFixoMensal(e));
 const lucroMedioMensal = (e, n = 12) => {
     const h = e.hist.slice(-n);
     return h.length ? h.reduce((soma, m) => soma + m.l, 0) / h.length : 0;
 };
+const receitaAnualReal = e => (contasEmpresa(e, { madura: true }).receita * 12) / estado.indicePrecos;
+function porteDa(e) {
+    if (tipoDa(e).porte === 'grupo') return PORTES.grupo;
+    const r = receitaAnualReal(e);
+    return r <= 360000 ? PORTES.micro : r <= 4.8e6 ? PORTES.pequena : r <= 100e6 ? PORTES.media : r <= 1e9 ? PORTES.grande : PORTES.grupo;
+}
+const podeAdministrar = e => !e.listada && contasEmpresa(e, { madura: true }).receita / estado.indicePrecos <= RECEITA_MAX_DONO;
 
-// Valor da empresa: lucro anual vezes um múltiplo (que cai quando a Selic sobe). Startup ainda sem lucro vale
-// um pouco pelo faturamento e pelo ritmo de crescimento, mas só depois de 6 meses de história.
-function avaliarEmpresa(e) {
-    const set = setorDa(e);
-    const h = e.hist;
-    const lucroAno = lucroMedioMensal(e) * 12;
-    const multiplo = set.multiplo * fatorJuros();
-    const evLucro = Math.max(0, lucroAno) * multiplo;
-    let evReceita = 0;
-    if (e.startup && h.length >= 6) {
-        const k = Math.min(12, h.length - 1);
-        const g = Math.pow(h[h.length - 1].r / h[h.length - 1 - k].r, 1 / k) - 1;
-        const recAno = h.slice(-12).reduce((soma, m) => soma + m.r, 0) / Math.min(12, h.length) * 12;
-        evReceita = recAno * 1.0 * limitar(g / 0.04, 0.3, 2.5) * fatorJuros() * 0.5;
+// Empresas maiores valem mais anos de lucro: são mais seguras e não dependem do dono.
+function multiploPorTamanho(receitaAnual) {
+    const pontos = [[0.36e6, 2.5], [4.8e6, 3.5], [100e6, 5.5], [1e9, 7], [6e9, 9]];
+    const x = Math.log10(Math.max(receitaAnual, 1));
+    if (x <= Math.log10(pontos[0][0])) return pontos[0][1];
+    for (let i = 1; i < pontos.length; i++) {
+        const [r0, m0] = pontos[i - 1], [r1, m1] = pontos[i];
+        if (x <= Math.log10(r1)) return m0 + ((m1 - m0) * (x - Math.log10(r0))) / (Math.log10(r1) - Math.log10(r0));
     }
-    const ev = Math.max(evLucro, evReceita);
-    return { ev, lucroAno, multiplo, valor: Math.max(0, ev + e.caixa) };
+    return pontos[pontos.length - 1][1];
+}
+
+// Valor da empresa: o lucro de um ano normal vezes um múltiplo, que cai quando a Selic sobe. O comprador sempre conta
+// com um gerente, porque não vai trabalhar lá. Se a empresa dá prejuízo, ainda valem os equipamentos (ativos).
+function avaliarEmpresa(e) {
+    const t = tipoDa(e);
+    const madura = contasEmpresa(e, { madura: true, comGerente: true });
+    const recente = e.hist.length >= 3 ? lucroMedioMensal(e) - (e.dono ? custoGerente(madura.receita) : 0) : madura.lucro;
+    const peso = (Math.min(12, e.hist.length) / 12) * 0.5;
+    const lucroAno = (peso * recente + (1 - peso) * madura.lucro) * 12;
+    const multiplo = multiploPorTamanho((madura.receita * 12) / estado.indicePrecos) * setorDa(e).mult * fatorJuros();
+    const ativos = (t.porte === 'grande' || t.porte === 'grupo' ? 0.5 : 0.35) * t.inv * e.unidades.length * estado.indicePrecos;
+    const ev = Math.max(ativos, lucroAno * multiplo);
+    return { ev, lucroAno, multiplo, ativos, valor: Math.max(0, ev + e.caixa) };
 }
 
 const patrimonioEmpresas = () => estado.empresas.filter(e => !e.listada).reduce((soma, e) => soma + avaliarEmpresa(e).valor, 0);
 
-// Roda todo mês: a receita varia com o setor e com a economia, o lucro entra no caixa da empresa
-// e o que passa da reserva (3 meses de custo fixo) é distribuído para você.
+// Roda todo mês: as unidades novas amadurecem, a clientela muda, o lucro entra no caixa da empresa
+// e o que passa da reserva (3 meses de custos fixos) é distribuído para você.
 function fecharEmpresas() {
     for (const e of estado.empresas) {
-        const set = setorDa(e);
-        let g = e.g + set.sens * estado.conjuntura * 0.055 + normal() * 0.02;
-        if (e.startup) {
-            e.g = Math.max(0.004, e.g * 0.98); // o crescimento esfria com o tempo
-            if (e.receita >= e.teto) g = Math.min(g, 0.004);
-        } else if (e.potencial) {
-            // Empresa estabelecida: depois de uma crise, as vendas voltam aos poucos para o que eram.
-            e.potencial *= 1 + set.g;
-            e.custoFixo *= 1 + set.g; // a empresa cresce junto: os custos fixos acompanham o tamanho dela, não o ciclo
-            g += 0.07 * limitar(Math.log(e.potencial / e.receita), -0.7, 0.7);
+        for (const u of e.unidades) u.r = Math.min(1, u.r + (1 - u.r) * RAMPA_MES);
+        e.mercado = limitar(e.mercado + (1 - e.mercado) * 0.04 + normal() * 0.02, 0.5, 1.4);
+        e.choque *= 0.85;
+        if (!e.listada && Math.random() < PROB_EVENTO_EMPRESA) eventoEmpresa(e);
+        if (e.dono && !podeAdministrar(e)) {
+            e.dono = false;
+            registrar(`${e.nome} cresceu demais para uma pessoa administrar: um gerente foi contratado`, 0);
         }
-        e.receita *= 1 + limitar(g, -0.15, 0.18);
-        const rec = e.receita * estado.indicePrecos;
-        const lucro = rec * (1 - set.v) - custoFixoNominal(e);
+        const c = contasEmpresa(e);
+        e.dre = { r: c.receita, i: c.impostos, n: c.insumos, f: c.folha, a: c.aluguel, o: c.outros, g: c.gerente };
+        const lucro = c.lucro;
         e.caixa += lucro;
-        const reserva = 3 * custoFixoNominal(e);
+        const reserva = 3 * c.fixos;
         const distribuido = lucro > 0 && e.caixa > reserva ? Math.min(lucro, e.caixa - reserva) : 0;
         if (distribuido > 0) {
             e.caixa -= distribuido;
@@ -1331,16 +1606,48 @@ function fecharEmpresas() {
                 registrar(`Lucros distribuídos por ${e.nome}`, distribuido);
             }
         }
-        e.hist.push({ r: rec, l: lucro, d: distribuido });
+        e.hist.push({ r: c.receita, l: lucro, d: distribuido });
         if (e.hist.length > 24) e.hist.shift();
         if (e.listada) {
-            estado.fund[e.listada].lpa = Math.max(0.0001, lucroMedioMensal(e) * 12 / e.acoesTotal);
+            estado.fund[e.listada].lpa = Math.max(0.0001, (lucroMedioMensal(e) * 12) / e.acoesTotal);
             if (e.caixa < 0) emitirAcoes(e);
         } else if (e.caixa < 0 && !e.prazo) {
             e.prazo = estado.dia + PRAZO_CHAMADA;
             registrar(`Chamada de capital: ${e.nome} ficou sem caixa. Você tem 1 mês para colocar ${fmtBRL(chamadaValor(e))}, ou a empresa vai à falência`, 0);
         }
     }
+}
+
+// Algo acontece com uma empresa sua: muda a clientela ou aparece uma conta inesperada.
+function eventoEmpresa(e) {
+    const ev = sorteioPeso(EVENTOS_EMPRESA);
+    const t = tipoDa(e);
+    let custo = 0;
+    if (ev.mercado) e.mercado = limitar(e.mercado + ev.mercado, 0.5, 1.4);
+    if (ev.custo) {
+        const c = contasEmpresa(e);
+        custo = ev.custo.inv ? ev.custo.inv * t.inv * estado.indicePrecos : ev.custo.folha ? ev.custo.folha * c.folha : ev.custo.receita * c.receita;
+        custo = moeda(Math.max(custo, 500 * estado.indicePrecos));
+        e.caixa -= custo;
+    }
+    const efeito = ev.mercado ? ` As vendas devem ${ev.mercado > 0 ? 'subir' : 'cair'} cerca de ${fmtPct(Math.abs(ev.mercado), false)} nos próximos meses.` : ` A conta foi de ${fmtBRL(custo)}, paga com o caixa da empresa.`;
+    registrarNoticia({ tipo: 'suaempresa', titulo: ev.t.replace('{e}', e.nome), porque: ev.p + efeito, precos: {}, juros: false, suas: true });
+}
+
+// Notícias de economia e de setor mexem nas vendas das suas empresas, conforme o setor de cada uma.
+// Devolve a frase que vai no fim da notícia ("Suas empresas sentem...").
+function choqueNasEmpresas(efeitos) {
+    const afetadas = [];
+    for (const e of privadas()) {
+        const f = setorDa(e).f;
+        let impacto = 0;
+        for (const k in efeitos) impacto += efeitos[k] * (f[k] || 0);
+        impacto = limitar(impacto * 1.5, -0.25, 0.25);
+        if (Math.abs(impacto) < 0.02) continue;
+        e.choque += impacto;
+        afetadas.push(`${e.nome} (vendas ${fmtPct(impacto)})`);
+    }
+    return afetadas.length ? ` Suas empresas sentem a notícia: ${afetadas.join(', ')} nos próximos meses.` : '';
 }
 
 function verificarEmpresas() {
@@ -1357,68 +1664,134 @@ function falencia(e) {
     registrar(`Falência: ${e.nome} não recebeu o capital a tempo e fechou as portas. Os ${fmtBRL(e.investido)} que você colocou nela foram perdidos`, 0);
 }
 
-function injetarCapital(uid, valor) {
+function injetarCapital(uid, valor, automatico = false) {
     const e = empresaPorUid(uid);
     valor = moeda(valor);
     if (!e || e.listada || !(valor > 0)) return;
-    if (valor > estado.caixa + 1e-9) return mostrarToast(`Você tem ${fmtBRL(estado.caixa)} no saldo. Venda ou resgate algum investimento para chegar a ${fmtBRL(valor)}.`, 'erro', 8000);
+    if (valor > estado.caixa + 1e-9) return automatico ? false : mostrarToast(`Você tem ${fmtBRL(estado.caixa)} no saldo. Venda ou resgate algum investimento para chegar a ${fmtBRL(valor)}.`, 'erro', 8000);
+    const estavaEmChamada = !!e.prazo;
     estado.caixa -= valor;
     e.caixa += valor;
     e.investido += valor;
-    registrar(`Capital colocado em ${e.nome}`, -valor);
-    if (e.prazo && e.caixa >= 0) {
-        e.prazo = null;
-        mostrarToast(`${e.nome} foi salva da falência por enquanto. Se os prejuízos continuarem, outra chamada de capital virá.`, 'ok', 9000);
-    } else {
-        mostrarToast(`Você colocou <b>${fmtBRL(valor)}</b> em ${e.nome}.`, 'ok');
-    }
+    registrar(automatico ? `Enquanto você estava fora, ${fmtBRL(valor)} do seu saldo foram colocados em ${e.nome} para evitar a falência` : `Capital colocado em ${e.nome}`, -valor);
+    if (e.caixa >= 0) e.prazo = null;
+    if (automatico) return true;
+    mostrarToast(estavaEmChamada && !e.prazo
+        ? `${e.nome} foi salva da falência por enquanto. Se os prejuízos continuarem, outra chamada de capital virá.`
+        : `Você colocou <b>${fmtBRL(valor)}</b> em ${e.nome}.`, 'ok', 8000);
     concluirOperacao();
 }
 
 function novaEmpresa(dados) {
-    const e = { uid: estado.proximoEmp++, startup: false, dia: estado.dia, recebido: 0, hist: [], prazo: null, propostas: null, ...dados };
+    const e = { uid: estado.proximoEmp++, dia: estado.dia, recebido: 0, hist: [], prazo: null, propostas: null, mercado: 1, choque: 0, dono: false, ...dados };
     estado.empresas.push(e);
     return e;
 }
 
-function abrirStartup(setor, capitalReal) {
+// Abrir do zero: equipamentos e reforma, mais um capital de giro que fica no caixa para pagar os custos fixos
+// dos primeiros meses (enquanto a clientela cresce, a empresa dá prejuízo), mais a abertura.
+function custoAbertura(t) {
+    const idx = estado.indicePrecos;
+    const inv = moeda(t.inv * idx);
+    const giro = moeda(MESES_DE_GIRO * previsaoNegocio(t).comGerente.fixos);
+    const taxa = moeda(Math.max(1500 * idx, 0.02 * t.inv * idx));
+    return { inv, giro, taxa, total: moeda(inv + giro + taxa) };
+}
+
+// Como fica uma unidade madura, em condições normais, com gerente ou com você administrando (usado no catálogo).
+function previsaoNegocio(t) {
+    const modelo = { tipo: t.id, setor: t.setor, unidades: [{ q: 1, r: 1 }], mercado: 1, choque: 0, dono: false };
+    return {
+        comGerente: contasEmpresa(modelo, { demanda: 1, comGerente: true }),
+        comVoce: t.receita <= RECEITA_MAX_DONO ? contasEmpresa(modelo, { demanda: 1 + BONUS_DONO, comGerente: false }) : null
+    };
+}
+
+function abrirNegocio(id) {
+    const t = NEGOCIOS[id];
+    if (!t || !t.abre) return;
     if (privadas().length >= MAX_EMPRESAS) return mostrarToast(`Você já tem ${MAX_EMPRESAS} empresas, que é o máximo. Venda uma antes de abrir outra.`, 'erro');
-    const set = SETORES_EMPRESA[setor];
-    const capital = moeda(capitalReal * estado.indicePrecos);
-    const taxa = moeda(Math.max(1500 * estado.indicePrecos, capital * CUSTO_ABERTURA));
-    if (capital + taxa > estado.caixa + 1e-9) return mostrarToast(`Para abrir a empresa você precisa de ${fmtBRL(capital + taxa)} no saldo: ${fmtBRL(capital)} de capital e ${fmtBRL(taxa)} com advogado, contador e registro.`, 'erro', 8000);
-    estado.caixa -= capital + taxa;
-    const custoFixo = capitalReal / 14; // o capital dura uns 14 meses de prejuízo
-    const n = estado.empresas.filter(x => x.setor === setor).length + 1;
-    const e = novaEmpresa({
-        startup: true, setor, nome: `${set.curto} ${n}`, investido: capital, caixa: capital,
-        custoFixo, receita: 0.25 * custoFixo, teto: TETO_STARTUP * custoFixo,
-        g: limitar(0.040 + normal() * 0.040, 0.01, 0.14) // o ritmo real de crescimento só se descobre com o tempo
-    });
-    registrar(`Você abriu a startup ${e.nome} com ${fmtBRL(capital)} de capital (mais ${fmtBRL(taxa)} de abertura)`, -(capital + taxa));
-    mostrarToast(`<b>${e.nome}</b> foi aberta! Startups gastam mais do que ganham no começo: o capital vai se queimando até as vendas crescerem. Algumas dão certo, muitas não.`, 'ok', 10000);
+    const c = custoAbertura(t);
+    if (c.total > estado.caixa + 1e-9) return mostrarToast(`Para abrir você precisa de ${fmtBRL(c.total)} no saldo.`, 'erro', 8000);
+    estado.caixa -= c.total;
+    const e = novaEmpresa({ tipo: id, setor: t.setor, nome: nomeFantasia(t), unidades: [{ q: qualidadeNova(), r: RAMPA_INICIAL }], caixa: c.giro, investido: c.total });
+    negocioEmCurso = null;
+    registrar(`Você abriu ${e.nome}: ${fmtBRL(c.inv)} em equipamentos e reforma, ${fmtBRL(c.giro)} de capital de giro e ${fmtBRL(c.taxa)} de abertura`, -c.total);
+    mostrarToast(`<b>${e.nome}</b> abriu as portas! Nos primeiros meses quase ninguém conhece a empresa, e é normal dar prejuízo até a clientela crescer. O capital de giro paga as contas enquanto isso.`, 'ok', 10000);
     concluirOperacao();
 }
 
-// Empresas à venda: 4 por vez, trocadas a cada 6 meses.
+// Crescer: abrir mais uma unidade. A nova costuma sair parecida com as que a empresa já tem.
+// A unidade nova também vem com capital de giro: 2 meses dos custos fixos dela (o resto da empresa ajuda a pagar).
+function custoExpansao(e) {
+    const t = tipoDa(e);
+    const idx = estado.indicePrecos;
+    const encarregado = t.porte === 'micro' ? 3000 : t.porte === 'pequena' ? 5000 : 0.01 * t.receita;
+    const inv = moeda(t.inv * idx);
+    const giro = moeda(2 * (t.folha + t.aluguel + t.outros + encarregado) * idx);
+    return { inv, giro, total: moeda(inv + giro) };
+}
+
+function expandirEmpresa(uid) {
+    const e = empresaPorUid(uid);
+    if (!e || e.listada) return;
+    const t = tipoDa(e);
+    if (e.unidades.length >= t.max) return mostrarToast(`${e.nome} já tem o máximo de ${t.un[1]}.`, 'erro');
+    const c = custoExpansao(e);
+    if (c.total > estado.caixa + 1e-9) return mostrarToast(`Para abrir mais uma ${t.un[0]} você precisa de ${fmtBRL(c.total)} no saldo.`, 'erro', 8000);
+    const porteAntes = porteDa(e);
+    estado.caixa -= c.total;
+    e.caixa += c.giro;
+    e.investido += c.total;
+    const qMedia = e.unidades.reduce((soma, u) => soma + u.q, 0) / e.unidades.length;
+    e.unidades.push({ q: qualidadeNova(qMedia, 0.12), r: RAMPA_INICIAL });
+    registrar(`${e.nome} abriu mais uma ${t.un[0]} (agora são ${nomeUnidades(t, e.unidades.length)})`, -c.total);
+    const porteDepois = porteDa(e);
+    mostrarToast(`${e.nome} agora tem <b>${nomeUnidades(t, e.unidades.length)}</b>. A nova começa com poucos clientes e leva alguns meses para amadurecer.` +
+        (porteDepois !== porteAntes ? ` Quando amadurecer, ${e.nome} vira <b>${porteDepois.toLowerCase()}</b>!` : ''), 'ok', 9000);
+    concluirOperacao();
+}
+
+// Sem emprego, você pode cuidar de uma empresa micro ou pequena e economizar o salário do gerente.
+function administrar(uid, sim) {
+    const e = empresaPorUid(uid);
+    if (!e) return;
+    if (sim) {
+        if (empregado()) return mostrarToast('Para cuidar da empresa você mesmo, precisa sair do emprego (na aba Vida e carreira). Enquanto tiver emprego, um gerente cuida dela.', 'erro', 9000);
+        if (!podeAdministrar(e)) return mostrarToast('Esta empresa é grande demais para uma pessoa só administrar.', 'erro');
+        estado.empresas.forEach(x => (x.dono = false));
+        e.dono = true;
+        registrar(`Você passou a administrar ${e.nome} pessoalmente`, 0);
+        mostrarToast(`Agora você cuida de <b>${e.nome}</b>. A empresa economiza o salário do gerente, e com o dono presente vende um pouco mais.`, 'ok', 8000);
+    } else {
+        e.dono = false;
+        registrar(`Você contratou um gerente para ${e.nome}`, 0);
+    }
+    concluirOperacao();
+}
+
+// Empresas à venda: 6 por vez, trocadas a cada 6 meses. Grupos e grandes empresas só se compram prontas.
+const PESOS_PORTE = [{ p: 'micro', peso: 26 }, { p: 'pequena', peso: 26 }, { p: 'media', peso: 22 }, { p: 'grande', peso: 16 }, { p: 'grupo', peso: 10 }];
 function gerarOfertasEmpresas() {
     const lista = [];
-    for (let i = 0; i < 4; i++) {
-        const setor = sorteio(Object.keys(SETORES_EMPRESA));
-        const set = SETORES_EMPRESA[setor];
-        const porte = sorteioPeso(PORTES_EMPRESA);
-        const receita = porte.receita * (0.8 + Math.random() * 0.5);
-        const custoFixo = receita * set.f * (0.9 + Math.random() * 0.25);
-        const rec = receita * estado.indicePrecos;
-        const lucro = rec * (1 - set.v) - custoFixo * estado.indicePrecos;
+    for (let i = 0; i < 6; i++) {
+        const porte = sorteioPeso(PESOS_PORTE).p;
+        const t = sorteio(LISTA_NEGOCIOS.filter(x => x.porte === porte));
+        const [min, max] = t.venda;
+        const n = min + Math.floor(Math.random() * (max - min + 1));
         const cand = {
-            startup: false, setor, porte: porte.nome, nome: `${porte.nome} de ${set.nome.split(' ')[0].toLowerCase()}`,
-            receita, potencial: receita, custoFixo, g: set.g, caixa: 2 * custoFixo * estado.indicePrecos,
-            hist: Array.from({ length: 12 }, () => ({ r: rec, l: lucro, d: 0 })),
-            cresc12: normal() * 0.05
+            tipo: t.id, setor: t.setor, nome: nomeFantasia(t), mercado: 0.9 + Math.random() * 0.25, choque: 0, dono: false, caixa: 0, hist: [],
+            unidades: Array.from({ length: n }, () => ({ q: qualidadeNova(1, 0.1), r: 1 }))
         };
-        const av = avaliarEmpresa(cand);
-        cand.preco = moeda((av.ev + cand.caixa) * (1.06 + Math.random() * 0.12));
+        const c = contasEmpresa(cand, { comGerente: true, demanda: cand.mercado });
+        cand.caixa = moeda(2 * c.fixos);
+        const margem = 1 - c.aliquota - tipoDa(cand).insumos;
+        cand.hist = Array.from({ length: 12 }, () => {
+            const r = c.receita * (0.95 + Math.random() * 0.1);
+            return { r, l: c.lucro + (r - c.receita) * margem, d: 0 };
+        });
+        cand.cresc12 = normal() * 0.06;
+        cand.preco = moeda(avaliarEmpresa(cand).valor * (1.03 + Math.random() * 0.12));
         cand.id = `${estado.dia}-${i}`;
         lista.push(cand);
     }
@@ -1432,10 +1805,14 @@ function comprarEmpresa(id) {
     if (o.preco > estado.caixa + 1e-9) return mostrarToast(`Faltam ${fmtBRL(o.preco - estado.caixa)} no seu saldo. Empresas são difíceis de vender, então junte o dinheiro antes.`, 'erro', 8000);
     estado.caixa -= o.preco;
     estado.ofertasEmpresas.lista = estado.ofertasEmpresas.lista.filter(x => x !== o);
-    const { preco, id: _id, cresc12, porte, ...resto } = o;
+    const { preco, id: _id, cresc12, ...resto } = o;
+    const pequena = tipoDa(o).simples;
+    // Em negócio pequeno, parte dos clientes ia por causa do antigo dono.
+    if (pequena) resto.mercado *= 0.9 + Math.random() * 0.1;
     const e = novaEmpresa({ ...resto, investido: preco });
     registrar(`Você comprou ${e.nome} por ${fmtBRL(preco)}`, -preco);
-    mostrarToast(`Você comprou <b>${e.nome}</b>! Todo mês o lucro que sobrar depois da reserva da empresa cai no seu saldo.`, 'ok', 9000);
+    mostrarToast(`Você comprou <b>${e.nome}</b>! Todo mês o lucro que sobrar depois da reserva da empresa cai no seu saldo.` +
+        (pequena ? ' Em negócios pequenos, alguns clientes iam por causa do antigo dono: as vendas podem cair um pouco no começo.' : ''), 'ok', 9000);
     concluirOperacao();
 }
 
@@ -1473,6 +1850,30 @@ function aceitarProposta(uid, i) {
     concluirOperacao();
 }
 
+// Jogos salvos antes do catálogo de negócios: a empresa antiga vira uma empresa de uma unidade com as mesmas vendas e custos.
+const V_ANTIGO = { alimentacao: 0.34, varejo: 0.58, servicos: 0.18, industria: 0.50, saude: 0.22, construcao: 0.55 };
+function converterEmpresaAntiga(e) {
+    const base = e.startup ? e.teto : e.potencial || e.receita;
+    // O custo fixo antigo já incluía quem administrava: tira dele o gerente, que agora é uma linha separada.
+    const gerente = 3000 + 0.025 * Math.min(base, 1e6) + 0.01 * Math.max(0, base - 1e6);
+    const cf = Math.max(0.3 * e.custoFixo, e.custoFixo - gerente);
+    const v = V_ANTIGO[e.setor] != null ? V_ANTIGO[e.setor] : 0.4;
+    if (!SETORES_EMPRESA[e.setor]) e.setor = 'servicos';
+    const anual = base * 12;
+    e.eco = {
+        id: 'antiga', nome: e.nome, porte: anual <= 360000 ? 'micro' : anual <= 4.8e6 ? 'pequena' : 'media', setor: e.setor,
+        receita: base, imposto: 0.08, insumos: Math.max(0.02, v - 0.08), folha: cf * 0.6, func: Math.max(1, Math.round((cf * 0.6) / 3500)),
+        aluguel: cf * 0.15, outros: cf * 0.25, inv: Math.max(20000, cf * 6), max: 10, un: ['unidade', 'unidades'],
+        simples: anual <= 4.8e6, abre: false, venda: [1, 1], explica: 'Empresa do seu jogo antigo.'
+    };
+    const ratio = e.receita / base;
+    e.unidades = [{ q: 1, r: limitar(ratio, 0.2, 1) }];
+    e.mercado = limitar(ratio > 1 ? ratio : 1, 0.5, 1.4);
+    e.choque = 0;
+    e.dono = false;
+    ['startup', 'teto', 'potencial', 'receita', 'custoFixo', 'g'].forEach(k => delete e[k]);
+}
+
 /* ---------- IPO: a empresa vira ação na bolsa ---------- */
 const lucroMinimoIPO = () => LUCRO_MIN_IPO * estado.indicePrecos;
 const elegivelIPO = e => !e.listada && e.hist.length >= 12 && avaliarEmpresa(e).lucroAno >= lucroMinimoIPO() && e.caixa >= 0 && !e.prazo;
@@ -1491,8 +1892,10 @@ function simularIPO(e, fracao) {
     return { av, total, justo, desconto, precoIPO, vendidas, retidas: total - vendidas, bruto, taxa, ir, liquido: moeda(bruto - taxa - ir) };
 }
 
+// O código da ação vem do nome da empresa: "Marmitaria Primavera" vira MARM3.
 function gerarTicker(e) {
-    const base = SETORES_EMPRESA[e.setor].curto.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4).padEnd(4, 'X');
+    const letras = e.nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z]/g, '');
+    const base = letras.slice(0, 4).padEnd(4, 'X');
     for (const sufixo of ['3', '4', '5', '6', '11', '12']) if (!ATIVOS[base + sufixo]) return base + sufixo;
     return base + (100 + estado.proximoEmp);
 }
@@ -1501,13 +1904,12 @@ function gerarTicker(e) {
 function registrarListada(e) {
     const id = e.listada;
     if (ATIVOS[id]) return;
-    const set = SETORES_EMPRESA[e.setor];
-    const perfil = PERFIS_LISTADA[e.setor];
+    const set = SETORES_EMPRESA[e.setor] || SETORES_EMPRESA.servicos;
     ATIVOS[id] = {
         tipo: 'acao', nome: e.nome, preco: e.ipoPreco, vol: 0.22 + 0.12 * set.sens, ret: 0.10, dy: 0, listada: true,
         explica: `${e.nome} é uma empresa de ${set.nome.toLowerCase()} que abriu o capital na bolsa do jogo. O preço acompanha o lucro da empresa e o humor do mercado. Os lucros são repartidos entre todos os sócios, na proporção das ações de cada um.`
     };
-    PERFIL[id] = { pl: 12, tags: perfil.tags, f: perfil.f };
+    PERFIL[id] = { pl: 12, tags: set.tags, f: set.f };
     ORDEM.push(id);
     VARIAVEIS.push(id);
     ACOES.push(id);
@@ -1560,6 +1962,7 @@ function fazerIPO(uid, fracao) {
     e.ipoPreco = sim.precoIPO;
     e.propostas = null;
     e.prazo = null;
+    e.dono = false;
     registrarListada(e);
     estado.acoes[e.listada] = { qtd: sim.retidas, pm: e.investido / sim.total };
     estado.caixa += sim.liquido;
@@ -1718,6 +2121,7 @@ function simularCompra(item, entrada, prazo, tabela) {
     const dinheiroHoje = moeda(entradaValor + itbi);
     let motivo = '';
     if (!estado.carreira) motivo = 'Escolha uma profissão primeiro.';
+    else if (financia && !h.bruto) motivo = 'Sem salário, o banco não aprova financiamento. Compre à vista ou arrume um emprego.';
     else if (financia && comprometimento > RENDA_MAX_PARCELAS) motivo = `O banco só aprova se as parcelas couberem em ${fmtPct(RENDA_MAX_PARCELAS, false)} do seu salário bruto. Com esta compra seriam ${fmtPct(comprometimento, false)}. Aumente a entrada, alongue o prazo ou espere uma promoção.`;
     else if (dinheiroHoje > estado.caixa + 1e-9) motivo = `Faltam ${fmtBRL(dinheiroHoje - estado.caixa)} no seu saldo. Bens são difíceis de vender, então junte o dinheiro antes, resgatando ou vendendo algum investimento.`;
     return { preco, entradaValor, financiado, itbi, taxaMes, ...res, comprometimento, dinheiroHoje, motivo, ok: !motivo };
@@ -2447,7 +2851,8 @@ function htmlNoticia(n, destaque) {
                 <td class="num">${fmtPct(l.esperado)}</td><td>${reacao(l.id)}</td></tr>`).join('')}</tbody>
         </table>`;
     } else {
-        const ids = destaque && destaque in n.precos ? [destaque] : Object.keys(n.precos);
+        // Os ativos que a criança tem aparecem primeiro.
+        const ids = destaque && destaque in n.precos ? [destaque] : Object.keys(n.precos).sort((a, b) => !!estado.acoes[b] - !!estado.acoes[a]);
         const mostrar = ids.slice(0, 10);
         corpo = ids.length
             ? `<div class="chips">${mostrar.map(id => `<button class="chip" data-id="${id}"><b>${id}</b> ${reacao(id)}</button>`).join('')}
@@ -2456,7 +2861,7 @@ function htmlNoticia(n, destaque) {
             : '';
     }
     return `<article class="noticia">
-        <div class="noticia-topo"><span class="selo ${n.tipo}">${ROTULO_NOTICIA[n.tipo]}</span><small>${dataDoDia(n.dia).toLocaleDateString('pt-BR')}</small></div>
+        <div class="noticia-topo"><span><span class="selo ${n.tipo}">${ROTULO_NOTICIA[n.tipo]}</span>${n.suas ? '<span class="selo voce">Mexe com o que é seu</span>' : ''}</span><small>${dataDoDia(n.dia).toLocaleDateString('pt-BR')}</small></div>
         <h5>${n.titulo}</h5>
         <p>${n.porque}</p>
         ${corpo}
@@ -2532,7 +2937,11 @@ function htmlAprenda() {
         ['Independência financeira', 'É quando o que seus investimentos pagam por mês cobre o seu custo de vida. A partir daí, trabalhar vira escolha. Quanto menor o custo de vida, mais cedo ela chega.'],
         ['IPO: abrir o capital', 'IPO é quando uma empresa vende uma parte de si ao público e passa a ter ações negociadas na bolsa. Os sócios recebem dinheiro, mas dividem lucros e decisões com os novos acionistas. Só empresas grandes e lucrativas conseguem fazer isso.'],
         ['Desconto do IPO e diluição', 'No IPO o preço da oferta fica um pouco abaixo do que a empresa vale, para atrair compradores, e por isso o preço costuma subir nos primeiros dias. Se depois a empresa vender ações novas para levantar dinheiro, cada ação passa a valer uma fatia menor dela: é a diluição.'],
-        ['Abrir ou comprar uma empresa', 'Abrir uma startup custa pouco, mas ela começa gastando mais do que ganha, e a maioria não dá certo. Comprar uma empresa que já funciona custa mais e dá lucro desde o começo, com menos incerteza. Como sócio, você recebe os lucros que passam da reserva da empresa.'],
+        ['Abrir ou comprar uma empresa', 'Abrir um negócio do zero custa menos, mas nos primeiros meses quase ninguém o conhece e é normal dar prejuízo; e nem todo ponto dá certo. Comprar uma empresa que já funciona custa mais e dá lucro desde o começo, com menos incerteza. Como sócio, você recebe os lucros que passam da reserva da empresa.'],
+        ['Faturamento não é lucro', 'Uma empresa que vende R$ 100 mil por mês não ganha R$ 100 mil. Desse dinheiro saem os impostos, as mercadorias e insumos, os salários, o aluguel, a energia, o contador e o gerente. O que sobra é o lucro, e em muitos negócios ele é só 5 ou 10 centavos de cada real vendido.'],
+        ['Crescer abrindo unidades', 'Uma loja só atende um tanto de clientes. Para crescer, a empresa abre mais lojas, equipes ou fábricas, e cada uma custa um novo investimento e leva meses para amadurecer. Assim um negócio micro pode virar pequeno, médio e até grande.'],
+        ['Dono ou gerente', 'Num negócio pequeno, boa parte do lucro é o trabalho do próprio dono. Quem tem emprego precisa pagar um gerente, e o lucro diminui. Por isso muita gente sai do emprego para cuidar do próprio negócio, mas sem salário a reserva de emergência fica ainda mais importante.'],
+        ['FGTS e seguro-desemprego', 'Todo mês a empresa deposita 8% do seu salário no FGTS, uma conta no seu nome. Quem é demitido sem justa causa saca o FGTS, recebe uma multa de 40% sobre ele e, com 12 meses ou mais de trabalho, algumas parcelas de seguro-desemprego. Quem pede demissão não recebe a multa nem o seguro.'],
         ['Chamada de capital', 'Quando o caixa da empresa acaba, os sócios precisam colocar mais dinheiro. Se não colocarem a tempo, a empresa fecha e o que foi investido se perde. Por isso quem empreende precisa de reserva também fora da empresa.'],
         ['Alavancagem operacional', 'Custos fixos não diminuem quando as vendas caem. Numa empresa com muito custo fixo, uma queda pequena nas vendas pode derrubar o lucro de uma vez e até virar prejuízo. É por isso que crises quebram empresas aparentemente saudáveis.'],
         ['Quanto vale uma empresa', 'Um jeito comum de calcular é o lucro de um ano vezes um múltiplo. Quando a Selic sobe, o múltiplo cai, porque a renda fixa passa a competir: o mesmo lucro vale menos. Compradores diferentes fazem propostas diferentes, e o certo é comparar antes de vender.'],
@@ -2550,24 +2959,27 @@ function htmlAprenda() {
 }
 
 let trocandoCarreira = false;
-let startupEmCurso = { setor: 'servicos', capital: CAPITAIS_STARTUP[1] };
+let negocioEmCurso = null;   // negócio aberto no catálogo da aba Empresas
+let porteCatalogo = 'micro'; // qual tamanho de negócio o catálogo mostra
 let ipoEmCurso = null; // { uid, frac }
+
+const linhaEmp = (rotulo, valor, cls = '') => `<div class="linha"><span>${rotulo}</span><b class="num ${cls}">${valor}</b></div>`;
+const menos = v => '− ' + fmtBRL(v);
 
 function cartaoListada(e) {
     const id = e.listada;
     const part = participacao(e);
     const av = avaliarEmpresa(e);
     const ult = e.hist[e.hist.length - 1];
-    const linha = (rotulo, valor, cls = '') => `<div class="linha"><span>${rotulo}</span><b class="num ${cls}">${valor}</b></div>`;
     return `<div class="card">
         <h4>${e.nome} · <span class="amarelo">${id}</span></h4>
         <p class="dica" style="margin:0 0 6px">${setorDa(e).nome} · na bolsa</p>
-        ${linha('Preço da ação', fmtBRL(preco(id)))}
-        ${linha('Valor de mercado', fmtBRL(e.acoesTotal * preco(id)))}
-        ${linha('Valor justo estimado', fmtBRL(av.valor))}
-        ${linha('Sua participação', fmtPct(part, false))}
-        ${linha('Lucro do mês', ult ? fmtBRL(ult.l) : '—', ult ? classe(ult.l) : '')}
-        ${linha('Dividendos que você já recebeu', fmtBRL(e.recebido), 'sobe')}
+        ${linhaEmp('Preço da ação', fmtBRL(preco(id)))}
+        ${linhaEmp('Valor de mercado', fmtBRL(e.acoesTotal * preco(id)))}
+        ${linhaEmp('Valor justo estimado', fmtBRL(av.valor))}
+        ${linhaEmp('Sua participação', fmtPct(part, false))}
+        ${linhaEmp('Lucro do mês', ult ? fmtBRL(ult.l) : '—', ult ? classe(ult.l) : '')}
+        ${linhaEmp('Dividendos que você já recebeu', fmtBRL(e.recebido), 'sobe')}
         ${part < 0.5 ? '<p class="dica">Você tem menos da metade das ações: já não controla a empresa.</p>' : ''}
         <button class="link-botao" data-id="${id}">Ver na bolsa e negociar</button>
     </div>`;
@@ -2575,117 +2987,197 @@ function cartaoListada(e) {
 
 function htmlIPO(e) {
     const s = simularIPO(e, ipoEmCurso.frac);
-    const linha = (rotulo, valor, cls = '') => `<div class="linha"><span>${rotulo}</span><b class="num ${cls}">${valor}</b></div>`;
     const botoes = FLOATS_IPO.map(f => `<button class="${f === ipoEmCurso.frac ? 'ativo' : ''}" data-emp="ipofloat" data-valor="${f}">${Math.round(f * 100)}%</button>`).join('');
     return `<hr class="separador">
         <p class="dica" style="margin:0 0 6px">Quanto da empresa vender ao público</p>
         <div class="seg quebra">${botoes}</div>
-        ${linha('Valor justo estimado', fmtBRL(s.av.valor))}
-        ${linha('Ações da empresa', String(s.total))}
-        ${linha(`Preço da oferta (${fmtPct(s.desconto, false)} abaixo do justo)`, fmtBRL(s.precoIPO))}
-        ${linha('Ações vendidas', String(s.vendidas))}
-        ${linha('Taxa dos bancos', '− ' + fmtBRL(s.taxa))}
-        ${linha('Imposto de Renda', s.ir > 0 ? '− ' + fmtBRL(s.ir) : 'Isento')}
+        ${linhaEmp('Valor justo estimado', fmtBRL(s.av.valor))}
+        ${linhaEmp('Ações da empresa', String(s.total))}
+        ${linhaEmp(`Preço da oferta (${fmtPct(s.desconto, false)} abaixo do justo)`, fmtBRL(s.precoIPO))}
+        ${linhaEmp('Ações vendidas', String(s.vendidas))}
+        ${linhaEmp('Taxa dos bancos', menos(s.taxa))}
+        ${linhaEmp('Imposto de Renda', s.ir > 0 ? menos(s.ir) : 'Isento')}
         <div class="linha total"><span>Você recebe</span><b class="num">${fmtBRL(s.liquido)}</b></div>
-        ${linha('Ações que ficam com você', `${s.retidas} (${fmtPct(1 - ipoEmCurso.frac, false)})`)}
+        ${linhaEmp('Ações que ficam com você', `${s.retidas} (${fmtPct(1 - ipoEmCurso.frac, false)})`)}
         <p class="dica">O desconto atrai compradores, e por isso o preço costuma subir nos primeiros dias. Depois disso o preço acompanha o lucro da empresa e o humor do mercado, e você passa a receber só a sua parte dos lucros. Se a empresa precisar de dinheiro, ela emite ações novas e a sua fatia diminui.</p>
         <button class="enviar compra" data-emp="ipoconfirmar" data-valor="${e.uid}">Fazer o IPO</button>
         <button class="link-botao" data-emp="ipocancelar">Cancelar</button>`;
 }
 
-function htmlEmpresas() {
-    const linha = (rotulo, valor, cls = '') => `<div class="linha"><span>${rotulo}</span><b class="num ${cls}">${valor}</b></div>`;
-    const naBolsa = estado.empresas.filter(e => e.listada).map(cartaoListada).join('');
-    const cartoes = privadas().map(e => {
-        const set = setorDa(e);
-        const av = avaliarEmpresa(e);
-        const ult = e.hist[e.hist.length - 1];
-        const meses = Math.min(12, e.hist.length);
-        let acoes = '';
-        if (e.prazo) {
-            acoes += `<p class="desce"><b>Chamada de capital: a empresa ficou sem caixa. Coloque ${fmtBRL(chamadaValor(e))} até ${dataDoDia(e.prazo).toLocaleDateString('pt-BR')} ou ela vai à falência.</b></p>
-                <button class="enviar compra" data-emp="injetar" data-valor="${e.uid}:${chamadaValor(e)}">Colocar ${fmtBRL(chamadaValor(e))}</button>`;
-        } else {
-            const tres = moeda(3 * custoFixoNominal(e));
-            acoes += `<button class="link-botao" data-emp="injetar" data-valor="${e.uid}:${tres}">Colocar ${fmtBRL(tres)} (3 meses de custos)</button>`;
-        }
-        if (e.propostas) {
-            acoes += `<hr class="separador"><p class="dica" style="margin:0 0 6px">Propostas válidas até ${dataDoDia(e.propostas.ate).toLocaleDateString('pt-BR')}:</p>` +
-                e.propostas.lista.map((p, i) => {
-                    const { liquido } = liquidoDaVenda(e, p.preco);
-                    return `<button class="opcao" data-emp="aceitar" data-valor="${e.uid}:${i}"><span>${p.comprador}<small>${p.texto} Você recebe ${fmtBRL(liquido)} depois do imposto.</small></span><b class="num">${fmtBRL(p.preco)}</b></button>`;
-                }).join('');
-        } else {
-            acoes += `<div><button class="link-botao" data-emp="propostas" data-valor="${e.uid}">Pedir propostas de venda</button></div>`;
-        }
-        if (ipoEmCurso && ipoEmCurso.uid === e.uid) acoes += htmlIPO(e);
-        else if (elegivelIPO(e)) acoes += `<div><button class="link-botao" data-emp="ipo" data-valor="${e.uid}">Abrir o capital na bolsa (IPO)</button></div>`;
-        else acoes += `<p class="dica">IPO: precisa de ${fmtBRL(lucroMinimoIPO())} de lucro por ano e 12 meses de história${e.hist.length >= 12 ? ` (a empresa faz ${fmtBRL(Math.max(0, avaliarEmpresa(e).lucroAno))})` : ''}.</p>`;
-        return `<div class="card">
-            <h4>${e.nome}</h4>
-            <p class="dica" style="margin:0 0 6px">${set.nome}${e.startup ? ' · startup' : ''}</p>
-            ${linha('Faturamento do mês', ult ? fmtBRL(ult.r) : '—')}
-            ${linha('Lucro do mês', ult ? fmtBRL(ult.l) : '—', ult ? classe(ult.l) : '')}
-            ${linha(`Lucro dos últimos ${meses || 0} meses`, meses ? fmtBRL(e.hist.slice(-12).reduce((soma, m) => soma + m.l, 0)) : '—')}
-            ${linha('Caixa da empresa', fmtBRL(e.caixa), e.caixa < 0 ? 'desce' : '')}
-            ${linha('Quanto vale hoje', fmtBRL(av.valor))}
-            ${linha('Você já colocou', fmtBRL(e.investido))}
-            ${linha('Lucros que você já recebeu', fmtBRL(e.recebido), 'sobe')}
-            ${acoes}
-        </div>`;
-    }).join('');
-    const vazio = !cartoes && !naBolsa ? '<p class="vazio">Você ainda não tem empresas. Abra uma startup ou compre uma empresa que já funciona, logo abaixo.</p>' : '';
+// As contas do último mês, como na contabilidade de uma empresa: do faturamento até o lucro.
+function htmlDRE(e) {
+    const d = e.dre;
+    if (!d) return '<p class="dica">As contas aparecem depois do primeiro mês.</p>';
+    const t = tipoDa(e);
+    const lucro = d.r - d.i - d.n - d.f - d.a - d.o - d.g;
+    return `${linhaEmp('Faturamento do mês', fmtBRL(d.r))}
+        ${linhaEmp(`Impostos (${fmtPct(d.r ? d.i / d.r : 0, false)} do faturamento)`, menos(d.i))}
+        ${linhaEmp('Mercadorias, insumos e comissões', menos(d.n))}
+        ${linhaEmp(`Salários e encargos (${t.func * e.unidades.length} funcionários)`, menos(d.f))}
+        ${d.a ? linhaEmp('Aluguel', menos(d.a)) : ''}
+        ${linhaEmp('Energia, água, contador, manutenção e propaganda', menos(d.o))}
+        ${linhaEmp(e.dono ? 'Gerente (você administra)' : 'Gerente e administração', d.g ? menos(d.g) : fmtBRL(0))}
+        <div class="linha total"><span>Lucro do mês</span><b class="num ${classe(lucro)}">${fmtBRL(lucro)}</b></div>`;
+}
 
-    const set = SETORES_EMPRESA[startupEmCurso.setor];
-    const cap = moeda(startupEmCurso.capital * estado.indicePrecos);
-    const taxa = moeda(Math.max(1500 * estado.indicePrecos, cap * CUSTO_ABERTURA));
-    const botoes = (acao, itens, atual) => `<div class="seg quebra">${itens.map(([valor, rotulo]) =>
-        `<button class="${valor === atual ? 'ativo' : ''}" data-emp="${acao}" data-valor="${valor}">${rotulo}</button>`).join('')}</div>`;
-    const abrir = `<div class="card">
-        <h4>Abrir uma startup</h4>
-        <p class="dica" style="margin:0 0 6px">Setor</p>
-        ${botoes('setor', Object.entries(SETORES_EMPRESA).map(([id, s]) => [id, s.curto]), startupEmCurso.setor)}
-        <p class="dica" style="margin:10px 0 6px">Capital inicial</p>
-        ${botoes('capital', CAPITAIS_STARTUP.map(c => [c, fmtBRL(c * estado.indicePrecos)]), startupEmCurso.capital)}
-        <p class="dica">${set.nome}. ${set.explica}</p>
-        ${linha('Capital', fmtBRL(cap))}
-        ${linha('Advogado, contador e registro', fmtBRL(taxa))}
-        ${linha('Custo fixo por mês', fmtBRL(startupEmCurso.capital / 14 * estado.indicePrecos))}
-        <div class="linha total"><span>Você paga hoje</span><b class="num">${fmtBRL(cap + taxa)}</b></div>
-        <p class="dica">Uma startup começa vendendo pouco e gastando muito. Ninguém sabe de antemão se ela vai crescer rápido o bastante. Se o caixa acabar, vem uma chamada de capital e você tem 1 mês para colocar mais dinheiro, ou ela fecha.</p>
-        <button class="enviar compra" data-emp="abrir" ${cap + taxa > estado.caixa + 1e-9 || privadas().length >= MAX_EMPRESAS ? 'disabled' : ''}>Abrir startup</button>
+function cartaoEmpresa(e) {
+    const t = tipoDa(e);
+    const av = avaliarEmpresa(e);
+    const n = e.unidades.length;
+    const rampa = e.unidades.reduce((soma, u) => soma + u.r, 0) / n;
+    let acoes = '';
+    if (e.prazo) {
+        acoes += `<p class="desce"><b>Chamada de capital: a empresa ficou sem caixa. Coloque ${fmtBRL(chamadaValor(e))} até ${dataDoDia(e.prazo).toLocaleDateString('pt-BR')} ou ela vai à falência.</b></p>
+            <button class="enviar compra" data-emp="injetar" data-valor="${e.uid}:${chamadaValor(e)}">Colocar ${fmtBRL(chamadaValor(e))}</button>`;
+    }
+    if (n < t.max) {
+        const c = custoExpansao(e);
+        acoes += `<button class="enviar compra" data-emp="expandir" data-valor="${e.uid}" ${c.total > estado.caixa + 1e-9 ? 'disabled' : ''}>Abrir mais uma ${t.un[0]} · ${fmtBRL(c.total)}</button>
+            <p class="dica" style="margin:4px 0 0">Para crescer, abra mais ${t.un[1]}: cada ${t.un[0]} só consegue atender um tanto de clientes. Dá para chegar a ${t.max}.</p>`;
+    }
+    const links = [];
+    if (!e.prazo) {
+        const tres = moeda(3 * custoFixoMensal(e));
+        links.push(`<button class="link-botao" data-emp="injetar" data-valor="${e.uid}:${tres}">Colocar ${fmtBRL(tres)} no caixa</button>`);
+    }
+    if (e.dono) links.push(`<button class="link-botao" data-emp="gerente" data-valor="${e.uid}">Contratar um gerente</button>`);
+    else if (podeAdministrar(e)) links.push(`<button class="link-botao" data-emp="dono" data-valor="${e.uid}">Administrar eu mesmo</button>`);
+    if (!e.propostas) links.push(`<button class="link-botao" data-emp="propostas" data-valor="${e.uid}">Pedir propostas de venda</button>`);
+    if (elegivelIPO(e) && !(ipoEmCurso && ipoEmCurso.uid === e.uid)) links.push(`<button class="link-botao" data-emp="ipo" data-valor="${e.uid}">Abrir o capital na bolsa (IPO)</button>`);
+    acoes += `<div>${links.join(' · ')}</div>`;
+    if (e.propostas) {
+        acoes += `<hr class="separador"><p class="dica" style="margin:0 0 6px">Propostas válidas até ${dataDoDia(e.propostas.ate).toLocaleDateString('pt-BR')}:</p>` +
+            e.propostas.lista.map((p, i) => {
+                const { liquido } = liquidoDaVenda(e, p.preco);
+                return `<button class="opcao" data-emp="aceitar" data-valor="${e.uid}:${i}"><span>${p.comprador}<small>${p.texto} Você recebe ${fmtBRL(liquido)} depois do imposto.</small></span><b class="num">${fmtBRL(p.preco)}</b></button>`;
+            }).join('');
+    }
+    if (ipoEmCurso && ipoEmCurso.uid === e.uid) acoes += htmlIPO(e);
+    else if (!elegivelIPO(e) && av.lucroAno >= 0.2 * lucroMinimoIPO()) acoes += `<p class="dica">IPO: precisa de ${fmtBRL(lucroMinimoIPO())} de lucro por ano e 12 meses de história.</p>`;
+    return `<div class="card">
+        <h4>${e.nome}</h4>
+        <p class="dica" style="margin:0 0 6px">${porteDa(e)} · ${setorDa(e).nome} · ${nomeUnidades(t, n)}${e.dono ? ' · <b>você administra</b>' : ''}</p>
+        ${rampa < 0.92 ? `<p class="dica" style="margin:0 0 6px">Ainda conquistando clientes: vende ${Math.round(rampa * 100)}% do que vai vender quando estiver madura.</p>` : ''}
+        ${htmlDRE(e)}
+        <hr class="separador">
+        ${linhaEmp('Caixa da empresa', fmtBRL(e.caixa), e.caixa < 0 ? 'desce' : '')}
+        ${linhaEmp('Quanto vale hoje', fmtBRL(av.valor))}
+        ${linhaEmp('Você já colocou', fmtBRL(e.investido))}
+        ${linhaEmp('Lucros que você já recebeu', fmtBRL(e.recebido), 'sobe')}
+        ${acoes}
     </div>`;
+}
 
-    const ofertas = ((estado.ofertasEmpresas && estado.ofertasEmpresas.lista) || []).map(o => {
-        const av = avaliarEmpresa(o);
-        const s = SETORES_EMPRESA[o.setor];
-        const sens = s.sens >= 1.2 ? 'Sente muito a economia' : s.sens >= 0.8 ? 'Sente a economia' : 'Sente pouco a economia';
-        return `<div class="card">
-            <h4>${o.nome}</h4>
-            <p class="dica" style="margin:0 0 6px">${s.nome} · ${sens}</p>
-            ${linha('Faturamento por mês', fmtBRL(o.hist[0].r))}
-            ${linha('Lucro por ano', fmtBRL(av.lucroAno), classe(av.lucroAno))}
-            ${linha('Vendas no último ano', fmtPct(o.cresc12), classe(o.cresc12))}
-            ${linha('Preço', fmtBRL(o.preco))}
-            ${linha('Preço em anos de lucro', av.lucroAno > 0 ? fmtNum(o.preco / av.lucroAno) + ' anos' : '—')}
-            <p class="dica">Com o lucro atual, o dinheiro se paga em ${av.lucroAno > 0 ? fmtNum(o.preco / av.lucroAno) : '—'} anos, e um investimento de renda fixa dobra o dinheiro em cerca de ${fmtNum(Math.log(2) / Math.log(1 + selic()))} anos. Empresa dá lucro maior, mas com risco e trabalho.</p>
-            <button class="enviar compra" data-emp="comprar" data-valor="${o.id}" ${o.preco > estado.caixa + 1e-9 || privadas().length >= MAX_EMPRESAS ? 'disabled' : ''}>Comprar</button>
+function cartaoCatalogo(t) {
+    const c = custoAbertura(t);
+    const p = previsaoNegocio(t);
+    return `<button class="card trilha ${negocioEmCurso === t.id ? 'ativo' : ''}" data-emp="negocio" data-valor="${t.id}">
+        <h4>${t.nome}</h4>
+        Para abrir: <b class="num">${fmtBRL(c.total)}</b>
+        <small>Fatura uns ${fmtBRL(p.comGerente.receita)} por mês. Lucro com gerente: ${fmtBRL(p.comGerente.lucro)}${p.comVoce ? `; cuidando você mesmo: ${fmtBRL(p.comVoce.lucro)}` : ''}.</small>
+    </button>`;
+}
+
+function htmlDetalheNegocio(t) {
+    const c = custoAbertura(t);
+    const p = previsaoNegocio(t);
+    const g = p.comGerente;
+    const set = SETORES_EMPRESA[t.setor];
+    const bloqueio = privadas().length >= MAX_EMPRESAS ? `Você já tem ${MAX_EMPRESAS} empresas, que é o máximo.` : c.total > estado.caixa + 1e-9 ? `Faltam ${fmtBRL(c.total - estado.caixa)} no seu saldo.` : '';
+    return `<div class="card" style="grid-column:1/-1">
+        <h4>${t.nome}</h4>
+        <p class="dica" style="margin:0 0 6px">${PORTES[t.porte]} · ${set.nome}. ${t.explica} ${set.explica}</p>
+        <p class="dica" style="margin:10px 0 4px"><b>Para abrir</b></p>
+        ${linhaEmp('Equipamentos, reforma e estoque', fmtBRL(c.inv))}
+        ${linhaEmp('Capital de giro (fica no caixa da empresa)', fmtBRL(c.giro))}
+        ${linhaEmp('Contador, alvarás e registro', fmtBRL(c.taxa))}
+        <div class="linha total"><span>Você paga hoje</span><b class="num">${fmtBRL(c.total)}</b></div>
+        <p class="dica" style="margin:12px 0 4px"><b>Um mês normal, depois que a clientela crescer</b></p>
+        ${linhaEmp('Faturamento', fmtBRL(g.receita))}
+        ${linhaEmp(`Impostos (${fmtPct(g.aliquota, false)})`, menos(g.impostos))}
+        ${linhaEmp('Mercadorias, insumos e comissões', menos(g.insumos))}
+        ${linhaEmp(`Salários e encargos (${g.funcionarios} funcionários)`, menos(g.folha))}
+        ${g.aluguel ? linhaEmp('Aluguel', menos(g.aluguel)) : ''}
+        ${linhaEmp('Energia, água, contador, manutenção e propaganda', menos(g.outros))}
+        ${linhaEmp('Gerente', menos(g.gerente))}
+        <div class="linha total"><span>Lucro com gerente</span><b class="num ${classe(g.lucro)}">${fmtBRL(g.lucro)}</b></div>
+        ${p.comVoce ? linhaEmp('Lucro se você mesmo administrar', fmtBRL(p.comVoce.lucro), classe(p.comVoce.lucro)) : ''}
+        ${g.lucro > 0 ? linhaEmp('Tempo para recuperar o que pagou (com gerente)', `${fmtNum(c.total / (g.lucro * 12))} anos`) : ''}
+        <p class="dica">Uma unidade nova começa vendendo ${fmtPct(RAMPA_INICIAL, false)} disso e leva cerca de 1 ano para chegar perto; nos primeiros meses é normal dar prejuízo, e o capital de giro paga as contas. Nem todo ponto dá certo: algumas unidades vendem bem mais e outras bem menos que o normal, e só dá para saber abrindo.
+            ${p.comVoce ? 'Sem emprego, você pode administrar o negócio e economizar o salário do gerente.' : 'É grande demais para uma pessoa administrar: sempre precisa de gerente.'}</p>
+        ${bloqueio ? `<p class="desce"><b>${bloqueio}</b></p>` : ''}
+        <button class="enviar compra" data-emp="abrir" data-valor="${t.id}" ${bloqueio ? 'disabled' : ''}>Abrir ${t.nome}</button>
+        <button class="link-botao" data-emp="fecharnegocio">Fechar</button>
+    </div>`;
+}
+
+function cartaoOferta(o) {
+    const t = tipoDa(o);
+    const av = avaliarEmpresa(o);
+    const s = setorDa(o);
+    const sens = s.sens >= 1.2 ? 'Sente muito a economia' : s.sens >= 0.8 ? 'Sente a economia' : 'Sente pouco a economia';
+    return `<div class="card">
+        <h4>${o.nome}</h4>
+        <p class="dica" style="margin:0 0 6px">${porteDa(o)} · ${s.nome} · ${nomeUnidades(t, o.unidades.length)} · ${sens}</p>
+        ${linhaEmp('Faturamento por mês', fmtBRL(o.hist[o.hist.length - 1].r))}
+        ${linhaEmp('Funcionários', String(t.func * o.unidades.length))}
+        ${linhaEmp('Lucro por ano (com gerente)', fmtBRL(av.lucroAno), classe(av.lucroAno))}
+        ${linhaEmp('Vendas no último ano', fmtPct(o.cresc12), classe(o.cresc12))}
+        ${linhaEmp('Preço', fmtBRL(o.preco))}
+        ${linhaEmp('Preço em anos de lucro', av.lucroAno > 0 ? fmtNum(o.preco / av.lucroAno) + ' anos' : '—')}
+        ${estado.indicePrecos > 1.05 ? `<p class="dica" style="margin:4px 0">${emDinheiroDeHoje(o.preco)}</p>` : ''}
+        <button class="enviar compra" data-emp="comprar" data-valor="${o.id}" ${o.preco > estado.caixa + 1e-9 || privadas().length >= MAX_EMPRESAS ? 'disabled' : ''}>Comprar</button>
+    </div>`;
+}
+
+function htmlEmpresas() {
+    const minhas = privadas();
+    const naBolsa = estado.empresas.filter(e => e.listada).map(cartaoListada).join('');
+    let resumo = '';
+    if (minhas.length) {
+        const valor = minhas.reduce((soma, e) => soma + avaliarEmpresa(e).valor, 0);
+        const lucroMes = minhas.reduce((soma, e) => soma + (e.hist.length ? e.hist[e.hist.length - 1].l : 0), 0);
+        const recebido = minhas.reduce((soma, e) => soma + e.recebido, 0);
+        const situacao = empregado()
+            ? 'Como você tem emprego, cada empresa paga um gerente. Sem emprego, você pode administrar uma empresa micro ou pequena e economizar esse salário.'
+            : estado.empresas.some(e => e.dono) ? 'Você trabalha numa empresa sua, que economiza o salário do gerente.'
+                : 'Você está sem emprego: pode administrar uma empresa micro ou pequena e economizar o salário do gerente.';
+        resumo = `<div class="card">
+            <h4>Suas empresas</h4>
+            ${linhaEmp('Valem hoje', fmtBRL(valor))}
+            ${linhaEmp('Lucro de todas no último mês', fmtBRL(lucroMes), classe(lucroMes))}
+            ${linhaEmp('Lucros que você já recebeu', fmtBRL(recebido), 'sobe')}
+            ${linhaEmp('Empresas fora da bolsa', `${minhas.length} de ${MAX_EMPRESAS}`)}
+            <p class="dica">${situacao} As notícias da economia e do setor mexem nas vendas: fique de olho nelas.</p>
         </div>`;
-    }).join('');
+    }
+    const vazio = !minhas.length && !naBolsa ? '<p class="vazio">Você ainda não tem empresas. Abra um negócio do zero ou compre uma empresa que já funciona, logo abaixo.</p>' : '';
+    const portes = [['micro', 'Micro'], ['pequena', 'Pequenas'], ['media', 'Médias']];
+    // O detalhe do negócio escolhido aparece logo abaixo do cartão dele, ocupando a linha inteira.
+    const catalogo = LISTA_NEGOCIOS.filter(t => t.abre && t.porte === porteCatalogo)
+        .map(t => cartaoCatalogo(t) + (negocioEmCurso === t.id ? htmlDetalheNegocio(t) : '')).join('');
+    const ofertas = ((estado.ofertasEmpresas && estado.ofertasEmpresas.lista) || []).map(cartaoOferta).join('');
     const ate = estado.ofertasEmpresas ? dataDoDia(estado.ofertasEmpresas.dia + 126).toLocaleDateString('pt-BR') : '';
-
-    return `${vazio}<div class="cards vida">${naBolsa}${cartoes}</div>
-        <h4 style="margin:18px 0 8px">Abrir ou comprar</h4>
-        <div class="cards vida">${abrir}${ofertas}</div>
-        <p class="dica">As empresas à venda mudam em ${ate}. Os lucros vão para o seu saldo, mas só o que passa da reserva da empresa (3 meses de custo fixo). Isto é um jogo e simplifica impostos: o lucro distribuído não paga Imposto de Renda aqui.</p>`;
+    return `${vazio}<div class="cards vida">${resumo}${naBolsa}${minhas.map(cartaoEmpresa).join('')}</div>
+        <h4 style="margin:18px 0 8px">Abrir um negócio do zero</h4>
+        <div class="seg quebra">${portes.map(([p, r]) => `<button class="${p === porteCatalogo ? 'ativo' : ''}" data-emp="porte" data-valor="${p}">${r}</button>`).join('')}</div>
+        <p class="dica" style="margin:8px 0">Valores de um mês normal, depois que a clientela cresce. Toque num negócio para ver as contas completas. Grandes empresas e grupos não se abrem do zero: compre uma pronta.</p>
+        <div class="cards">${catalogo}</div>
+        <h4 style="margin:18px 0 8px">Empresas prontas à venda</h4>
+        <div class="cards vida">${ofertas}</div>
+        <p class="dica">As empresas à venda mudam em ${ate}. Os lucros vão para o seu saldo, mas só o que passa da reserva da empresa (3 meses de custos fixos). Isto é um jogo e simplifica impostos: o lucro distribuído não paga Imposto de Renda aqui.</p>`;
 }
 
 function acaoEmpresas(acao, valor) {
     const [a, b] = String(valor).split(':');
     switch (acao) {
-        case 'setor': startupEmCurso.setor = valor; break;
-        case 'capital': startupEmCurso.capital = +valor; break;
-        case 'abrir': return abrirStartup(startupEmCurso.setor, startupEmCurso.capital);
+        case 'porte': porteCatalogo = valor; negocioEmCurso = null; break;
+        case 'negocio': negocioEmCurso = negocioEmCurso === valor ? null : valor; break;
+        case 'fecharnegocio': negocioEmCurso = null; break;
+        case 'abrir': return abrirNegocio(valor);
+        case 'expandir': return expandirEmpresa(valor);
+        case 'dono': return administrar(valor, true);
+        case 'gerente': return administrar(valor, false);
         case 'comprar': return comprarEmpresa(valor);
         case 'injetar': return injetarCapital(a, +b);
         case 'propostas': return pedirPropostas(valor);
@@ -2745,7 +3237,8 @@ function htmlBens() {
 
     const catalogo = CATALOGO_BENS.map(i => `<button class="card trilha ${compraEmCurso && compraEmCurso.id === i.id ? 'ativo' : ''}" data-bens="escolher" data-valor="${i.id}">
         <h4>${i.nome}</h4><b class="num">${fmtBRL(precoLista(i))}</b>
-        <small>${i.tipo === 'carro' ? 'Perde valor todo ano' : 'Acompanha a inflação, mas demora para vender'}</small></button>`).join('');
+        <small>${i.tipo === 'carro' ? 'Perde valor todo ano' : 'Acompanha a inflação, mas demora para vender'}</small>
+        ${estado.indicePrecos > 1.05 ? `<small>${emDinheiroDeHoje(precoLista(i))}</small>` : ''}</button>`).join('');
 
     return `<div class="cards vida">${cardReserva}${cardsBens}</div>
         <h4 style="margin:18px 0 8px">Comprar um bem</h4>
@@ -2856,7 +3349,8 @@ function htmlVida() {
             <div class="linha"><span>${rosto} ${nomeHumor}</span><b class="num">${Math.round(estado.felicidade)} de 100</b></div>
             <div class="meta"><div style="width:${estado.felicidade}%;background:${corFelicidade()}"></div></div>
             ${linha(`Para onde está indo (${indo})`, `${rostoAlvo} ${Math.round(fel.alvo)}`, indo === 'subindo' ? 'sobe' : indo === 'caindo' ? 'desce' : '')}
-            ${linha(`Padrão de vida: ${fmtPct(Math.min(fel.parteVida, 9.99), false)} do salário líquido`, String(Math.round(fel.padrao)))}
+            ${linha(fel.emp ? `Padrão de vida: ${fmtPct(Math.min(fel.parteVida, 9.99), false)} do salário líquido` : 'Base sem salário', String(Math.round(fel.padrao)))}
+            ${fel.desemprego ? linha('Sem emprego', pontos(fel.desemprego), 'desce') : ''}
             ${fel.casa ? linha('Morar na casa própria', pontos(fel.casa), 'sobe') : ''}
             ${fel.carro ? linha('Ter carro', pontos(fel.carro), 'sobe') : ''}
             ${fel.vermelho ? linha('Dívida no vermelho', pontos(fel.vermelho), 'desce') : ''}
@@ -2870,16 +3364,59 @@ function htmlVida() {
     const gastos = h.custo + h.bens;
     const cobertura = gastos ? renda / gastos : 0;
     const independente = cobertura >= 1;
+    const emp = empregado();
+
+    // Cartão do emprego: a escada da carreira quando trabalha; a busca de vagas quando está sem emprego.
+    let cardEmprego;
+    if (emp) {
+        const risco = 1 - Math.pow(1 - riscoDemissao(), 12);
+        const nivelRisco = risco < 0.05 ? 'baixo' : risco < 0.12 ? 'médio' : 'alto';
+        cardEmprego = `<div class="card">
+            <h4>${trilha.nome}</h4>
+            <ul class="escada">${escada}</ul>
+            <hr class="separador">
+            ${promocao}
+            ${linha('Risco de demissão', `${nivelRisco} (${fmtPct(risco, false)} ao ano)`, nivelRisco === 'alto' ? 'desce' : nivelRisco === 'baixo' ? 'sobe' : '')}
+            <p class="dica" style="margin:4px 0">O risco sobe quando a economia vai mal, quando o desânimo atrapalha o trabalho (felicidade baixa) e nos 3 primeiros meses (período de experiência).</p>
+            <button class="link-botao" data-vida="trocar">Trocar de carreira</button> · <button class="link-botao" data-vida="demissao">Pedir demissão</button>
+        </div>`;
+    } else {
+        const d = estado.desemprego;
+        const s = d && d.seguro;
+        const cargos = trilha.cargos;
+        const ofertas = (d.ofertas || []).filter(o => o.ate >= estado.dia).map(o => {
+            const i = d.ofertas.indexOf(o);
+            return `<button class="opcao" data-vida="vaga" data-valor="${i}"><span>${cargos[o.nivel][0]} · ${o.empresa}<small>Responda até ${dataDoDia(o.ate).toLocaleDateString('pt-BR')}. Toque para aceitar.</small></span><b class="num">${fmtBRL(salarioDaOferta(o))}</b></button>`;
+        }).join('');
+        const fgtsLibera = d ? dataDoDia(d.desde + FGTS_LIBERA_DIAS).toLocaleDateString('pt-BR') : '';
+        cardEmprego = `<div class="card">
+            <h4>Sem emprego</h4>
+            ${linha('Último cargo', cargos[c.nivel][0])}
+            ${d ? linha('Desde', dataDoDia(d.desde).toLocaleDateString('pt-BR')) : ''}
+            ${linha('Seguro-desemprego', s && s.parcelas > 0 ? `${s.parcelas} parcela${s.parcelas > 1 ? 's' : ''} de ${fmtBRL(s.valor)}` : 'Sem parcelas', s && s.parcelas > 0 ? 'sobe' : '')}
+            ${estado.fgts > 0.005 ? linha('FGTS guardado', fmtBRL(estado.fgts)) : ''}
+            ${estado.fgts > 0.005 ? `<p class="dica" style="margin:0">O FGTS fica guardado e é liberado depois de 3 anos sem carteira assinada (${fgtsLibera}).</p>` : ''}
+            <hr class="separador">
+            ${d && d.buscando
+                ? `<p class="dica" style="margin:0 0 6px">Procurando emprego de ${trilha.nome.toLowerCase()}. As vagas chegam aos poucos (mais rápido com a economia aquecida) e aparecem aqui e nas notícias.</p>
+                   ${ofertas || '<p class="vazio">Nenhuma oferta ainda.</p>'}
+                   <button class="link-botao" data-vida="parar">Parar de procurar</button>`
+                : `<button class="enviar compra" data-vida="buscar">Procurar emprego de ${trilha.nome.toLowerCase()}</button>`}
+            <p class="dica">Sem salário, as contas do mês saem do seu saldo. ${estado.empresas.some(e => !e.listada) ? 'Você também pode administrar uma empresa sua na aba Empresas e economizar o salário do gerente.' : 'Outra saída é abrir um negócio na aba Empresas e trabalhar nele.'}</p>
+            <button class="link-botao" data-vida="trocar">Começar em outra área (primeiro cargo)</button>
+        </div>`;
+    }
 
     return `<div class="cards vida">
         <div class="card">
             <h4>Seu holerite</h4>
-            ${linha('Cargo', h.cargo)}
-            ${linha('Salário bruto', fmtBRL(h.bruto))}
+            ${linha(emp ? 'Cargo' : 'Situação', h.cargo)}
+            ${emp ? `${linha('Salário bruto', fmtBRL(h.bruto))}
             ${estado.indicePrecos > 1.05 ? `<div class="linha"><span>Equivale a, em reais de hoje</span><b class="num">${fmtBRL(h.bruto / estado.indicePrecos)}</b></div>` : ''}
             ${linha('INSS', '− ' + fmtBRL(h.inss))}
             ${linha('Imposto de Renda', h.irrf ? '− ' + fmtBRL(h.irrf) : 'Isento')}
-            ${linha('Salário líquido', fmtBRL(h.liquido))}
+            ${linha('Salário líquido', fmtBRL(h.liquido))}` : linha('Seguro-desemprego', h.seguro ? '+ ' + fmtBRL(h.seguro) : 'Nada este mês', h.seguro ? 'sobe' : '')}
+            ${emp && estado.fgts > 0.005 ? linha('FGTS guardado (8% do bruto por mês)', fmtBRL(estado.fgts)) : ''}
             ${linha('Custo de vida', '− ' + fmtBRL(h.custo))}
             ${h.economia > 0 ? `<p class="dica" style="margin:0">Já descontados ${fmtBRL(h.economia)} que você economiza por ter casa própria ou carro.</p>` : ''}
             ${h.bens > 0 ? linha('Parcelas, IPTU e manutenção', '− ' + fmtBRL(h.bens)) : ''}
@@ -2887,15 +3424,10 @@ function htmlVida() {
             <div class="linha total"><span>Sobra para investir</span><b class="num ${classe(h.sobra)}">${fmtBRL(h.sobra)}</b></div>
             <p class="dica">${h.sobra < 0
                 ? 'Você gasta mais do que ganha. O que faltar sai do saldo, e saldo negativo paga 8% de juros ao mês.'
-                : 'Cai no seu saldo no primeiro dia útil de cada mês. Em dezembro vem também o 13º.'}</p>
+                : emp ? 'Cai no seu saldo no primeiro dia útil de cada mês. Em dezembro vem também o 13º.'
+                    : 'Cai no seu saldo no primeiro dia útil de cada mês, enquanto durarem as parcelas do seguro-desemprego.'}</p>
         </div>
-        <div class="card">
-            <h4>${trilha.nome}</h4>
-            <ul class="escada">${escada}</ul>
-            <hr class="separador">
-            ${promocao}
-            <button class="link-botao" data-vida="trocar">Trocar de carreira</button>
-        </div>
+        ${cardEmprego}
         ${cardFelicidade}
         <div class="card">
             <h4>Padrão de vida</h4>
@@ -2922,6 +3454,15 @@ function acaoVida(acao, valor) {
         case 'padrao': mudarPadraoVida(+valor); break;
         case 'trocar': trocandoCarreira = true; renderAba(); break;
         case 'cancelar': trocandoCarreira = false; renderAba(); break;
+        case 'demissao': pedirDemissao(); break;
+        case 'buscar':
+            estado.desemprego.buscando = true;
+            estado.desemprego.ultimaBusca = estado.dia;
+            mostrarToast('Você começou a procurar emprego. As ofertas chegam aos poucos, enquanto o tempo passa.', 'ok');
+            concluirOperacao();
+            break;
+        case 'parar': estado.desemprego.buscando = false; concluirOperacao(); break;
+        case 'vaga': aceitarVaga(+valor); break;
     }
 }
 
@@ -2996,7 +3537,7 @@ function completarEstado() {
     const padrao = {
         proventos: 0, efeitos: [], noticias: [], naoLidas: 0, usados: [],
         ajusteSelic: 0, ajusteIpca: 0, baseSelic: null, baseIpca: null, rumores: [], proximoCopom: 0, governo: null, premioFiscal: 0, pesquisa: 0, tendenciaEleitoral: 0, campanha: false, anoEleicao: 0, proximaEleicao: 0, mercadoFechado: null, sombra: {}, antesCrise: {}, fund: {}, proximaNoticia: estado.dia + 3,
-        felicidade: FELICIDADE_INICIAL, bonusPadraoMes: 0, alegriaInvestMes: 0,
+        felicidade: FELICIDADE_INICIAL, bonusPadraoMes: 0, alegriaInvestMes: 0, fgts: 0, desemprego: null,
         carreira: null, padraoVida: 0, salarioMinimo: SALARIO_MINIMO_INICIAL, indicePrecos: 1, fatorIR: 1, rolagem: {},
         bens: [], proximoBem: 1, indiceImoveis: 1, anoIPVA: 0,
         empresas: [], proximoEmp: 1, ofertasEmpresas: null, conjuntura: 0,
@@ -3005,6 +3546,11 @@ function completarEstado() {
     };
     for (const k in padrao) if (estado[k] == null) estado[k] = padrao[k];
     if (estado.padraoMes == null) estado.padraoMes = estado.padraoVida;
+    // Jogos de antes do emprego com demissão: quem já trabalhava conta como 1 ano de casa.
+    if (estado.carreira && estado.carreira.mesesEmprego == null) estado.carreira.mesesEmprego = Math.max(12, estado.carreira.meses);
+    if (estado.carreira && !empregado() && !estado.desemprego) estado.desemprego = { desde: estado.dia, seguro: null, buscando: false, ofertas: [], ultimaBusca: estado.dia };
+    estado.empresas.forEach(e => { if (!e.unidades) converterEmpresaAntiga(e); });
+    if (estado.ofertasEmpresas && estado.ofertasEmpresas.lista.some(o => !o.unidades)) estado.ofertasEmpresas = null;
     if (!estado.proximoCopom) agendarCopom(20);
     if (!estado.proximaEleicao) agendarEleicao();
     if (!estado.ofertasEmpresas) gerarOfertasEmpresas();
@@ -3068,6 +3614,7 @@ function usarJogoSalvo(salvo) {
         for (const id in estado.hist) estado.hist[id] = expandirHist(id, estado.hist[id]);
         delete estado.histCompacto;
     }
+    (estado.empresas || []).forEach(e => { if (!e.unidades) converterEmpresaAntiga(e); });
     (estado.empresas || []).filter(e => e.listada).forEach(registrarListada);
     completarEstado();
     calcularVencimentos();
@@ -3152,8 +3699,9 @@ const celular = () => window.matchMedia('(max-width: 760px)').matches;
 
 function irPara(t) {
     tela = t;
-    if (t === 'carteira' || t === 'vida') aba = t;
-    else if (t === 'mais' && (aba === 'carteira' || aba === 'vida')) aba = 'noticias';
+    const proprias = ['carteira', 'vida', 'empresas']; // telas do celular que têm botão próprio na barra de baixo
+    if (proprias.includes(t)) aba = t;
+    else if (t === 'mais' && proprias.includes(aba)) aba = 'noticias';
     document.body.dataset.tela = t;
     document.querySelectorAll('#navCelular button').forEach(b => b.classList.toggle('ativo', b.dataset.tela === t));
     hoverPrincipal = null;
@@ -3351,16 +3899,17 @@ window.addEventListener('pagehide', salvar);
 document.addEventListener('freeze', salvar);
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) salvar();
+    else tique(); // voltou para o app: calcula na hora o tempo que passou fora
 });
 // Pede ao navegador para não apagar os dados do jogo quando o aparelho estiver com pouco espaço.
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
 carregar();
-estado.ultimoTick = Date.now();
 if (!estado.carreira) aba = 'vida';
 salvar();
 renderTudo();
 irPara(estado.carreira ? 'mercado' : 'vida');
 if (!estado.carreira) mostrarToast('Bem-vindo! Escolha uma profissão para o jogo começar.', '', 8000);
+tique(); // o relógio continua de onde o jogo foi salvo: o tempo que o app ficou fechado também conta
 setInterval(tique, 1000);
 buscarTaxasBancoCentral();
