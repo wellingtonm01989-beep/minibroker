@@ -3846,6 +3846,11 @@ document.getElementById('dNoticias').addEventListener('click', e => {
 document.getElementById('proventos').addEventListener('click', resgatarProventos);
 
 document.getElementById('toast').addEventListener('click', e => {
+    if (e.currentTarget.classList.contains('atualizar')) {
+        salvar();
+        location.reload();
+        return;
+    }
     if (!e.currentTarget.classList.contains('noticia')) return;
     aba = 'noticias';
     renderAba();

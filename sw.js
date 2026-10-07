@@ -1,7 +1,7 @@
 // Service worker: guarda os arquivos do jogo para ele abrir mesmo sem internet.
 // Com internet, busca sempre a versão mais nova (e atualiza a cópia guardada); sem internet, usa a cópia.
 // Ao mudar a lista de arquivos, troque a versão para apagar a cópia antiga.
-const CACHE = 'minibroker-v2';
+const CACHE = 'minibroker-v3';
 const ARQUIVOS = [
     './',
     './investimentos.html',

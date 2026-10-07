@@ -569,9 +569,49 @@
         navigator.serviceWorker.addEventListener('controllerchange', () => {
             if (!jaTinhaVersao || recarregou) return;
             recarregou = true;
+            salvar();
             location.reload();
         });
-        navigator.serviceWorker.register('sw.js').catch(() => {});
+        navigator.serviceWorker.register('sw.js').then(reg => {
+            // Ao voltar para o app, confere se o service worker mudou.
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+        }).catch(() => {});
+    }
+
+    // Atualização automática. No celular, o app instalado pode ficar dias aberto em segundo plano com a versão velha:
+    // voltar para ele não recarrega a página. Por isso o jogo confere se os arquivos do site mudaram (pela etiqueta de
+    // versão que o servidor manda) ao voltar para o app e a cada 10 minutos. Ao voltar, já recarrega (o jogo é salvo
+    // antes); com o app na tela, avisa e atualiza quando a criança tocar no aviso.
+    if (location.protocol.startsWith('http')) {
+        const ARQUIVOS_JOGO = ['investimentos.html', 'app.js', 'vida.js', 'noticias.js'];
+        const assinatura = () => Promise.all(ARQUIVOS_JOGO.map(a =>
+            fetch(a, { method: 'HEAD', cache: 'no-store' })
+                .then(r => (r.ok ? r.headers.get('etag') || r.headers.get('last-modified') || '' : ''))
+                .catch(() => '')))
+            .then(partes => (partes.includes('') ? null : partes.join('|'))); // sem internet: não conclui nada
+        let versaoAberta = null;
+        assinatura().then(a => (versaoAberta = a));
+        const conferirVersao = async voltouAgora => {
+            const nova = await assinatura();
+            if (!nova) return;
+            if (!versaoAberta) { versaoAberta = nova; return; }
+            if (nova === versaoAberta) return;
+            if (voltouAgora) {
+                salvar();
+                try { sessionStorage.setItem('minibroker-atualizado', '1'); } catch (e) { /* sem armazenamento */ }
+                location.reload();
+            } else {
+                mostrarToast('Saiu uma versão nova do MiniBroker. <b>Toque aqui para atualizar</b> (seu jogo fica salvo).', 'ok atualizar', 600000);
+            }
+        };
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) conferirVersao(true); });
+        setInterval(() => { if (!document.hidden) conferirVersao(false); }, 10 * 60 * 1000);
+        try {
+            if (sessionStorage.getItem('minibroker-atualizado')) {
+                sessionStorage.removeItem('minibroker-atualizado');
+                mostrarToast('O MiniBroker foi atualizado para a versão nova. Seu jogo continua de onde parou.', 'ok', 8000);
+            }
+        } catch (e) { /* sem armazenamento */ }
     }
 </script>
 </body>
