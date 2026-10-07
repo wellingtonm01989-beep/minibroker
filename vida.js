@@ -191,6 +191,15 @@ const FELICIDADE_INVESTIR_FATOR = 2;
 const FELICIDADE_INVESTIR_MAX = 1;
 const FELICIDADE_INVESTIR_MES = 3;
 const FELICIDADE_INVESTIR_ACIMA_ALVO = 20;
+// Ganhar e perder dinheiro: todo mês, o que os investimentos, as empresas e os bens ganharam ou perderam mexe na
+// felicidade. Perder dói o dobro do que ganhar alegra (aversão à perda): cada 1% de ganho no mês dá +0,3 e cada 1% de perda tira 0,6.
+const FELICIDADE_GANHO = 30;
+const FELICIDADE_PERDA = 60;
+const FELICIDADE_GANHO_MAX = 3;
+const FELICIDADE_PERDA_MAX = 6;
+// Um imprevisto entristece conforme o tamanho da conta perto da renda do mês: 1 mês de renda tira 1,5 ponto, até 4.
+const FELICIDADE_IMPREVISTO = 1.5;
+const FELICIDADE_IMPREVISTO_MAX = 4;
 // Felicidade baixa: imprevistos até 2,5 vezes mais frequentes e problemas de saúde até 3 vezes mais prováveis entre eles.
 const IMPREVISTO_MULT_TRISTE = 2.5;
 const IMPREVISTO_MULT_FELIZ = 0.6;

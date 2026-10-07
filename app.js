@@ -1231,7 +1231,8 @@ function alvoFelicidade() {
 
 function atualizarFelicidadeDoMes() {
     const antes = estado.felicidade;
-    const dif = alvoFelicidade().alvo - antes;
+    felicidadeDoDinheiro();
+    const dif = alvoFelicidade().alvo - estado.felicidade;
     mudarFelicidade(dif * (dif < 0 ? FELICIDADE_RITMO_CAINDO : FELICIDADE_RITMO_SUBINDO));
     estado.padraoMes = estado.padraoVida;
     estado.bonusPadraoMes = 0;
@@ -1239,6 +1240,27 @@ function atualizarFelicidadeDoMes() {
     if (antes >= 35 && estado.felicidade < 35) {
         registrar('Sua felicidade está baixa: só trabalhar e guardar cansa. Imprevistos e problemas de saúde ficam mais frequentes. Que tal aproveitar um pouco mais o seu salário?', 0);
     }
+}
+
+// Quanto o patrimônio ganhou ou perdeu no mês, sem contar o dinheiro guardado do salário (que entra nos dois lados).
+// O ganho alegra e a perda entristece o dobro. A base é o patrimônio do mês anterior (no mínimo 6 meses de custo de vida,
+// para R$ 10 a menos não parecerem uma tragédia para quem tem pouco).
+function felicidadeDoDinheiro() {
+    const patrimonio = patrimonioAtual();
+    const resultado = patrimonio - estado.totalAportado;
+    if (estado.resultadoAnterior != null) {
+        const valor = resultado - estado.resultadoAnterior;
+        const base = Math.max(estado.patrimonioAnterior, 6 * custoDeVida(), 1000 * estado.indicePrecos);
+        const pct = valor / base;
+        const pontos = pct >= 0 ? Math.min(FELICIDADE_GANHO_MAX, pct * FELICIDADE_GANHO) : -Math.min(FELICIDADE_PERDA_MAX, -pct * FELICIDADE_PERDA);
+        mudarFelicidade(pontos);
+        estado.felicidadeDinheiro = { pontos, pct };
+        const p = pontos.toFixed(1).replace('.', ',');
+        if (pontos <= -2) registrar(`Seus investimentos, empresas e bens perderam ${fmtBRL(-valor)} no mês (${fmtPct(pct)}). Perder dinheiro dói: felicidade ${p}`, 0);
+        else if (pontos >= 1.5) registrar(`Seus investimentos, empresas e bens ganharam ${fmtBRL(valor)} no mês (${fmtPct(pct)}). Felicidade +${p}`, 0);
+    }
+    estado.resultadoAnterior = resultado;
+    estado.patrimonioAnterior = patrimonio;
 }
 
 // Cada investimento dá um pouco de alegria, proporcional ao valor perto do salário líquido.
@@ -2104,7 +2126,11 @@ function imprevisto() {
     } else {
         valor = Math.max(custoDeVida() * ev.fator * (0.8 + Math.random() * 0.5), ev.min * estado.indicePrecos);
     }
-    cobrirDespesa(moeda(valor), texto);
+    // Perder dinheiro com uma conta inesperada entristece, conforme o tamanho dela perto da renda do mês.
+    const renda = Math.max(holerite().liquido, custoDeVida());
+    const pesar = Math.min(FELICIDADE_IMPREVISTO_MAX, (valor / renda) * FELICIDADE_IMPREVISTO);
+    mudarFelicidade(-pesar);
+    cobrirDespesa(moeda(valor), texto + (pesar >= 0.5 ? ` (felicidade −${pesar.toFixed(1).replace('.', ',')})` : ''));
 }
 
 function simularCompra(item, entrada, prazo, tabela) {
@@ -2934,6 +2960,7 @@ function htmlAprenda() {
         ['Custo de vida', 'É tudo que você gasta para viver: moradia, comida, transporte, saúde e lazer. Quem gasta menos do que ganha tem sobra para investir. A inflação encarece o custo de vida todo ano.'],
         ['Carreira e cursos', 'Estudar custa dinheiro e leva tempo, mas aumenta o salário para o resto da vida. No jogo, cada promoção exige experiência no cargo e um curso de capacitação.'],
         ['Cheque especial', 'Se o saldo fica negativo, o banco empresta sem perguntar e cobra juros altíssimos, aqui 8% ao mês. É uma das dívidas mais caras que existem. Por isso vale ter uma reserva em um investimento que dá para resgatar a qualquer hora.'],
+        ['Aversão à perda', 'Perder R$ 100 dói mais do que ganhar R$ 100 alegra: estudos mostram que a dor da perda é cerca de duas vezes maior. Por isso quem vê a carteira subir e descer muito tende a ficar ansioso, mesmo quando no fim ganha dinheiro. No jogo, a felicidade sobe com os ganhos do mês e cai o dobro com as perdas. Investimentos mais calmos, como a renda fixa, trazem menos sustos.'],
         ['Independência financeira', 'É quando o que seus investimentos pagam por mês cobre o seu custo de vida. A partir daí, trabalhar vira escolha. Quanto menor o custo de vida, mais cedo ela chega.'],
         ['IPO: abrir o capital', 'IPO é quando uma empresa vende uma parte de si ao público e passa a ter ações negociadas na bolsa. Os sócios recebem dinheiro, mas dividem lucros e decisões com os novos acionistas. Só empresas grandes e lucrativas conseguem fazer isso.'],
         ['Desconto do IPO e diluição', 'No IPO o preço da oferta fica um pouco abaixo do que a empresa vale, para atrair compradores, e por isso o preço costuma subir nos primeiros dias. Se depois a empresa vender ações novas para levantar dinheiro, cada ação passa a valer uma fatia menor dela: é a diluição.'],
@@ -3355,9 +3382,11 @@ function htmlVida() {
             ${fel.carro ? linha('Ter carro', pontos(fel.carro), 'sobe') : ''}
             ${fel.vermelho ? linha('Dívida no vermelho', pontos(fel.vermelho), 'desce') : ''}
             ${linha('Alegria de investir neste mês', `+${estado.alegriaInvestMes.toFixed(1).replace('.', ',')} de ${FELICIDADE_INVESTIR_MES}`, estado.alegriaInvestMes > 0.05 ? 'sobe' : '')}
+            ${estado.felicidadeDinheiro ? linha(`Ganhos e perdas do mês passado (${fmtPct(estado.felicidadeDinheiro.pct)})`,
+                `${estado.felicidadeDinheiro.pontos >= 0 ? '+' : ''}${estado.felicidadeDinheiro.pontos.toFixed(1).replace('.', ',')}`, classe(estado.felicidadeDinheiro.pontos)) : ''}
             ${linha('Chance de imprevistos', mult > 1.05 ? `${fmtNum(mult)}× maior` : mult < 0.95 ? `${fmtNum(1 / mult)}× menor` : 'normal', mult > 1.05 ? 'desce' : mult < 0.95 ? 'sobe' : '')}
             ${estado.felicidade < 50 ? '<p class="desce"><b>Com a felicidade baixa, problemas de saúde (até cirurgias) e crises de estresse ficam mais prováveis.</b></p>' : ''}
-            <p class="dica">Todo mês a felicidade anda um pouco em direção ao alvo. Quem só trabalha e guarda tudo vai ficando triste. Subir o padrão de vida dá +${FELICIDADE_SUBIR_PADRAO} na hora (descer tira ${FELICIDADE_DESCER_PADRAO}), comprar um bem dá alegria conforme o tamanho da compra perto do seu patrimônio, e cada investimento também alegra um pouco (até +${FELICIDADE_INVESTIR_MES} por mês, e no máximo ${FELICIDADE_INVESTIR_ACIMA_ALVO} pontos acima do alvo: investir é bom, mas não substitui viver). Mas a alegria passa: aos poucos você se acostuma e ela volta para o alvo. O segredo é equilibrar aproveitar hoje e investir para o futuro.</p>
+            <p class="dica">Todo mês a felicidade anda um pouco em direção ao alvo. Quem só trabalha e guarda tudo vai ficando triste. Subir o padrão de vida dá +${FELICIDADE_SUBIR_PADRAO} na hora (descer tira ${FELICIDADE_DESCER_PADRAO}), comprar um bem dá alegria conforme o tamanho da compra perto do seu patrimônio, e cada investimento também alegra um pouco (até +${FELICIDADE_INVESTIR_MES} por mês, e no máximo ${FELICIDADE_INVESTIR_ACIMA_ALVO} pontos acima do alvo: investir é bom, mas não substitui viver). Ganhar dinheiro alegra e perder entristece, mas perder dói o dobro: é a aversão à perda. Imprevistos caros também entristecem. Mas a alegria passa: aos poucos você se acostuma e ela volta para o alvo. O segredo é equilibrar aproveitar hoje e investir para o futuro.</p>
         </div>`;
 
     const renda = rendaPassivaMensal();
