@@ -266,6 +266,8 @@
     }
     .rodape button { border: 1px solid var(--borda); padding: 7px 12px; border-radius: 8px; color: var(--mudo); }
     .rodape button:hover { color: var(--vermelho); border-color: var(--vermelho); }
+    .rodape button.seguro:hover { color: var(--azul); border-color: var(--azul); }
+    .rodape-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
     .toast {
         position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 20px);
         background: var(--painel-2); border: 1px solid var(--borda); border-left: 4px solid var(--azul);
@@ -530,7 +532,12 @@
 
 <footer class="rodape">
     <div id="fonte"></div>
-    <button id="reiniciar">Recomeçar do zero</button>
+    <div class="rodape-botoes">
+        <button id="baixarCopia" class="seguro" title="Baixa um arquivo com o seu jogo. Com ele dá para recuperar o progresso ou continuar em outro aparelho">Baixar cópia do jogo</button>
+        <button id="carregarCopia" class="seguro" title="Abre um arquivo de cópia baixado antes">Carregar cópia</button>
+        <input type="file" id="arquivoCopia" accept=".json,application/json" hidden>
+        <button id="reiniciar">Recomeçar do zero</button>
+    </div>
 </footer>
 
 <!-- Só aparece no celular: cada botão mostra uma parte do jogo por vez. -->

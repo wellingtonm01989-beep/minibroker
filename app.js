@@ -487,8 +487,8 @@ function tique() {
     const topoNoticias = estado.noticias[0];
     const dias = relogio();
     if (dias) {
-        // O jogo salvo é grande: grava no máximo a cada 15 segundos (e sempre ao sair ou operar).
-        if (Date.now() - ultimoSalvo > 15000) salvar();
+        // Grava a cada dia do jogo que passa (no máximo a cada 5 segundos), e sempre ao sair ou operar.
+        if (Date.now() - ultimoSalvo > 5000) salvar();
         renderPendente = true;
         if (estado.noticias[0] !== topoNoticias) {
             mostrarNoticia(estado.noticias[0]);
@@ -692,7 +692,7 @@ function temporadaResultados() {
 
 function registrarNoticia(n) {
     estado.noticias.unshift({ dia: estado.dia, ...n });
-    if (estado.noticias.length > 200) estado.noticias.pop();
+    if (estado.noticias.length > 120) estado.noticias.pop();
     estado.naoLidas++;
 }
 
@@ -2940,28 +2940,107 @@ function completarEstado() {
     });
 }
 
-// Arredonda os números ao salvar para caber no armazenamento do navegador.
+// O jogo salvo precisa ser pequeno: o navegador do celular guarda poucos megabytes por site, e um
+// salvamento que não cabe falha. Por isso o histórico de preços vai só com os fechamentos (5 algarismos),
+// e as velas são remontadas ao carregar (os pavios mudam um pouco, o resto fica igual).
+const MAX_PRECOS_NOTICIA = 15;
+function compactar() {
+    const copia = { ...estado, histCompacto: true, hist: {} };
+    for (const id in estado.hist) copia.hist[id] = estado.hist[id].map(v => Number(v.c.toPrecision(5)));
+    copia.patrimonio = estado.patrimonio.map(Math.round);
+    copia.investidoHist = estado.investidoHist.map(Math.round);
+    copia.noticias = estado.noticias.map(n => {
+        if (n.tabela) return n;
+        const ids = Object.keys(n.precos || {});
+        if (ids.length <= MAX_PRECOS_NOTICIA) return n;
+        const precos = {};
+        ids.slice(0, MAX_PRECOS_NOTICIA).forEach(id => (precos[id] = n.precos[id]));
+        return { ...n, precos };
+    });
+    return copia;
+}
+
+function expandirHist(id, fechamentos) {
+    const s = (ATIVOS[id] ? ATIVOS[id].vol : 0.3) / Math.sqrt(DIAS_ANO);
+    return fechamentos.map((c, i) => {
+        const o = i ? fechamentos[i - 1] : c;
+        const pavio = Math.abs(normal()) * s * 0.5;
+        return { o, c, h: Math.max(o, c) * (1 + pavio), l: Math.min(o, c) * (1 - pavio) };
+    });
+}
+
+const textoSalvo = () => JSON.stringify(compactar(), (k, v) => (typeof v === 'number' && k !== 'ultimoTick' ? Math.round(v * 10000) / 10000 : v));
+
 let ultimoSalvo = 0;
+let falhaAvisada = false;
 function salvar() {
     ultimoSalvo = Date.now();
     try {
-        localStorage.setItem(CHAVE_SALVO, JSON.stringify(estado, (k, v) => (typeof v === 'number' && k !== 'ultimoTick' ? Math.round(v * 10000) / 10000 : v)));
-    } catch (e) { /* navegador sem armazenamento */ }
+        localStorage.setItem(CHAVE_SALVO, textoSalvo());
+        falhaAvisada = false;
+    } catch (e) {
+        // Antes este erro era engolido em silêncio e o jogo podia ficar horas sem salvar.
+        if (falhaAvisada) return;
+        falhaAvisada = true;
+        mostrarToast('<b>Não consegui salvar o jogo neste aparelho.</b> O armazenamento do navegador pode estar cheio ou bloqueado. Use "Baixar cópia do jogo", no fim da página, para não perder o progresso.', 'erro', 15000);
+    }
+}
+
+// Transforma um jogo salvo (do navegador ou de um arquivo de cópia) no jogo atual. Devolve false se não for um jogo válido.
+function usarJogoSalvo(salvo) {
+    if (!salvo || salvo.versao !== 3 || !salvo.hist) return false;
+    limparListadas();
+    estado = salvo;
+    if (estado.histCompacto) {
+        for (const id in estado.hist) estado.hist[id] = expandirHist(id, estado.hist[id]);
+        delete estado.histCompacto;
+    }
+    (estado.empresas || []).filter(e => e.listada).forEach(registrarListada);
+    completarEstado();
+    calcularVencimentos();
+    return true;
 }
 
 function carregar() {
     try {
-        const salvo = JSON.parse(localStorage.getItem(CHAVE_SALVO));
-        if (salvo && salvo.versao === 3 && salvo.hist) {
-            limparListadas();
-            estado = salvo;
-            (estado.empresas || []).filter(e => e.listada).forEach(registrarListada);
-            completarEstado();
-            calcularVencimentos();
-            return;
-        }
+        if (usarJogoSalvo(JSON.parse(localStorage.getItem(CHAVE_SALVO)))) return;
     } catch (e) { /* sem jogo salvo */ }
     novoEstado();
+}
+
+// Cópia de segurança num arquivo: protege o progresso e permite levar o jogo do computador para o celular.
+function baixarCopia() {
+    salvar();
+    const blob = new Blob([textoSalvo()], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `minibroker-${dataDoDia(estado.dia).toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    mostrarToast('Cópia do jogo baixada. Guarde o arquivo: com ele você recupera o jogo aqui ou em outro aparelho.', 'ok', 8000);
+}
+
+function carregarCopia(arquivo) {
+    const leitor = new FileReader();
+    leitor.onload = () => {
+        let salvo = null;
+        try { salvo = JSON.parse(leitor.result); } catch (e) { /* arquivo inválido */ }
+        if (!salvo || salvo.versao !== 3 || !salvo.hist) return mostrarToast('Esse arquivo não é uma cópia do MiniBroker.', 'erro');
+        if (!confirm('Trocar o jogo atual pelo da cópia? O progresso que não estiver na cópia será perdido.')) return;
+        usarJogoSalvo(salvo);
+        estado.ultimoTick = Date.now();
+        estado.acumulado = 0;
+        trocandoCarreira = false;
+        compraEmCurso = null;
+        ipoEmCurso = null;
+        salvar();
+        renderTudo();
+        irPara(estado.carreira ? 'mercado' : 'vida');
+        mostrarToast(`Jogo carregado: ${dataDoDia(estado.dia).toLocaleDateString('pt-BR')}, patrimônio de ${fmtBRL(patrimonioAtual())}.`, 'ok', 8000);
+    };
+    leitor.readAsText(arquivo);
 }
 
 // Séries do Banco Central (SGS): 432 = meta Selic; 13522 = IPCA acumulado em 12 meses.
@@ -3187,10 +3266,21 @@ window.addEventListener('resize', () => {
     }, 100);
 });
 
+document.getElementById('baixarCopia').addEventListener('click', baixarCopia);
+document.getElementById('carregarCopia').addEventListener('click', () => document.getElementById('arquivoCopia').click());
+document.getElementById('arquivoCopia').addEventListener('change', e => {
+    if (e.target.files[0]) carregarCopia(e.target.files[0]);
+    e.target.value = '';
+});
+
+// No celular o sistema pode congelar ou fechar o app quando ele vai para segundo plano: salva antes.
 window.addEventListener('pagehide', salvar);
+document.addEventListener('freeze', salvar);
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) salvar();
 });
+// Pede ao navegador para não apagar os dados do jogo quando o aparelho estiver com pouco espaço.
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
 carregar();
 estado.ultimoTick = Date.now();
