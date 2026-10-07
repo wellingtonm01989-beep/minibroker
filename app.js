@@ -719,6 +719,8 @@ function comprarAcao(id, qtd) {
     const pos = estado.acoes[id] || { qtd: 0, pm: 0 };
     pos.pm = (pos.pm * pos.qtd + custo) / (pos.qtd + qtd);
     pos.qtd += qtd;
+    // Guarda as últimas compras para marcar no gráfico onde o ativo foi comprado.
+    pos.compras = [...(pos.compras || []), { dia: estado.dia, preco: moeda(preco(id)), qtd }].slice(-30);
     estado.acoes[id] = pos;
     estado.caixa -= custo;
     registrar(`Compra de ${qtd} ${id} a ${fmtBRL(preco(id))}`, -custo);
@@ -1838,6 +1840,7 @@ function desenharGrafico(canvas, dados, op) {
     let max = Math.max(...p.map(v => (op.velas ? v.h : v.c)));
     // base = linha tracejada de comparação (ex.: dinheiro que a criança colocou), um valor por ponto.
     if (op.base) { min = Math.min(min, ...op.base); max = Math.max(max, ...op.base); }
+    if (op.precoMedio) { min = Math.min(min, op.precoMedio); max = Math.max(max, op.precoMedio); }
     const folga = (max - min) * 0.08 || Math.abs(max) * 0.01 || 1;
     min -= folga;
     max += folga;
@@ -1909,6 +1912,38 @@ function desenharGrafico(canvas, dados, op) {
         ctx.lineWidth = 1;
     }
 
+    // O que a criança tem: linha do preço médio (verde se está no lucro, vermelha se no prejuízo) e bolinhas onde comprou.
+    if (op.precoMedio) {
+        const ym = Y(op.precoMedio);
+        const corMedio = ultimo >= op.precoMedio ? '#16c784' : '#ea3943';
+        ctx.strokeStyle = corMedio;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        linhaReta(ctx, m.l, ym, W - m.r, ym);
+        ctx.setLineDash([]);
+        ctx.lineWidth = 1;
+        const texto = `Seu preço médio ${op.formatar(op.precoMedio)} · ${fmtPct(ultimo / op.precoMedio - 1)}`;
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        const larg = ctx.measureText(texto).width + 12;
+        const ty = ym - 20 < m.t ? ym + 4 : ym - 20;
+        ctx.fillStyle = corMedio;
+        ctx.fillRect(m.l + 4, ty, larg, 16);
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(texto, m.l + 10, ty + 8);
+    }
+    for (const c of op.compras || []) {
+        ctx.beginPath();
+        ctx.arc(X(c.i), Y(c.v), 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#f0b90b';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+        ctx.lineWidth = 1;
+    }
+
     const yu = Y(ultimo);
     ctx.fillStyle = cor;
     ctx.fillRect(W - m.r + 2, yu - 10, m.r - 4, 20);
@@ -1925,20 +1960,27 @@ function desenharGrafico(canvas, dados, op) {
         linhaReta(ctx, X(i), m.t, X(i), m.t + h);
         linhaReta(ctx, m.l, Y(v.c), W - m.r, Y(v.c));
         ctx.setLineDash([]);
-        const texto = [op.rotulo(i), op.formatar(v.c)];
+        const extra = op.extraHover ? op.extraHover(i) : '';
+        const texto = [op.rotulo(i), op.formatar(v.c), extra].filter(Boolean);
         ctx.font = '12px system-ui, sans-serif';
         const larg = Math.max(...texto.map(t => ctx.measureText(t).width)) + 20;
+        const alt = extra ? 62 : 44;
         const bx = X(i) + larg + 14 > W - m.r ? X(i) - larg - 10 : X(i) + 10;
         ctx.fillStyle = '#1a1f2e';
         ctx.strokeStyle = '#2c3446';
-        ctx.fillRect(bx, m.t + 4, larg, 44);
-        ctx.strokeRect(bx, m.t + 4, larg, 44);
+        ctx.fillRect(bx, m.t + 4, larg, alt);
+        ctx.strokeRect(bx, m.t + 4, larg, alt);
         ctx.fillStyle = '#8a93a6';
         ctx.textAlign = 'left';
         ctx.fillText(texto[0], bx + 10, m.t + 17);
         ctx.fillStyle = '#e6e9f0';
         ctx.font = 'bold 13px system-ui, sans-serif';
         ctx.fillText(texto[1], bx + 10, m.t + 35);
+        if (extra) {
+            ctx.fillStyle = '#f0b90b';
+            ctx.font = '12px system-ui, sans-serif';
+            ctx.fillText(extra, bx + 10, m.t + 53);
+        }
     }
 
     canvas._indice = clientX => {
@@ -1960,10 +2002,19 @@ function desenharPrincipal() {
     const id = estado.selecionado;
     const canvas = document.getElementById('grafico');
     const ultimoDia = estado.dia;
+    // Bolinha no dia de cada compra (ou aplicação) que ainda aparece no período do gráfico.
+    const marcasPorIndice = compras => i => {
+        const aqui = compras.filter(c => c.i === i);
+        return aqui.length ? aqui.map(c => c.texto).join(' · ') : '';
+    };
     if (ehFixa(id)) {
         const dados = historicoFixa(id, Math.min(periodo, MAX_HISTORICO));
+        const compras = estado.lotes.filter(l => l.ativo === id && l.dias < dados.length)
+            .map(l => ({ i: dados.length - 1 - l.dias, v: dados[dados.length - 1 - l.dias], texto: `Você aplicou ${fmtBRL(l.aplicado)}` }));
         desenharGrafico(canvas, dados, {
             hover: hoverPrincipal,
+            compras,
+            extraHover: marcasPorIndice(compras),
             formatar: v => 'R$ ' + fmtNum(v),
             rotulo: i => fmtData(dataDoDia(ultimoDia - (dados.length - 1 - i)))
         });
@@ -1979,9 +2030,18 @@ function desenharPrincipal() {
         dados = agruparVelas(dados, passo);
     }
     const total = dados.length;
+    const pos = estado.acoes[id];
+    const compras = [];
+    for (const c of (pos && pos.compras) || []) {
+        const k = h.length - 1 - (ultimoDia - c.dia) - inicio;
+        if (k >= 0 && k < h.length - inicio) compras.push({ i: Math.floor(k / passo), v: c.preco, texto: `Você comprou ${c.qtd} a ${fmtNum(c.preco)}` });
+    }
     desenharGrafico(canvas, dados, {
         velas,
         hover: hoverPrincipal,
+        precoMedio: pos ? pos.pm : null,
+        compras,
+        extraHover: marcasPorIndice(compras),
         formatar: fmtNum,
         rotulo: i => fmtData(dataDoDia(ultimoDia - Math.min(h.length - 1 - inicio, (total - 1 - i) * passo)))
     });
