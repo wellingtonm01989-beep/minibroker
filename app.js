@@ -316,7 +316,19 @@ function patrimonioAtual() {
 
 function registrar(texto, valor) {
     estado.extrato.unshift({ dia: estado.dia, texto, valor });
-    if (estado.extrato.length > 300) estado.extrato.pop();
+    if (estado.extrato.length > MAX_EXTRATO) estado.extrato.pop();
+}
+
+// O extrato e as notícias ficam guardados por 1 ano e 2 meses do jogo; o que for mais antigo é apagado.
+// Os limites de quantidade só existem para proteger o armazenamento do celular.
+const DIAS_HISTORICOS = 14 * DIAS_MES;
+const MAX_EXTRATO = 2000;
+const MAX_NOTICIAS = 300;
+function apagarHistoricosAntigos() {
+    const limite = estado.dia - DIAS_HISTORICOS;
+    while (estado.extrato.length && estado.extrato[estado.extrato.length - 1].dia < limite) estado.extrato.pop();
+    while (estado.noticias.length && estado.noticias[estado.noticias.length - 1].dia < limite) estado.noticias.pop();
+    estado.naoLidas = Math.min(estado.naoLidas, estado.noticias.length);
 }
 
 function passarDia() {
@@ -399,6 +411,7 @@ function passarDia() {
     }
 
     fecharMes();
+    apagarHistoricosAntigos();
 
     estado.patrimonio.push(patrimonioAtual());
     estado.investidoHist.push(estado.totalAportado);
@@ -692,7 +705,7 @@ function temporadaResultados() {
 
 function registrarNoticia(n) {
     estado.noticias.unshift({ dia: estado.dia, ...n });
-    if (estado.noticias.length > 120) estado.noticias.pop();
+    if (estado.noticias.length > MAX_NOTICIAS) estado.noticias.pop();
     estado.naoLidas++;
 }
 
@@ -2403,7 +2416,7 @@ function renderAba() {
         desenharPatrimonio();
     }
     if (aba === 'extrato') {
-        el.innerHTML = estado.extrato.map(e => `
+        el.innerHTML = '<p class="dica" style="margin:0 0 10px">O extrato guarda as movimentações de 1 ano e 2 meses do jogo. As mais antigas são apagadas.</p>' + estado.extrato.map(e => `
             <div class="extrato-item">
                 <div>${e.texto}<small>${dataDoDia(e.dia).toLocaleDateString('pt-BR')}</small></div>
                 <b class="num ${classe(e.valor)}">${e.valor ? (e.valor > 0 ? '+' : '') + fmtBRL(e.valor) : ''}</b>
@@ -2413,7 +2426,7 @@ function renderAba() {
         estado.naoLidas = 0;
         renderSelo();
         el.innerHTML = estado.noticias.length
-            ? estado.noticias.map(n => htmlNoticia(n)).join('')
+            ? '<p class="dica" style="margin:0 0 10px">As notícias ficam guardadas por 1 ano e 2 meses do jogo. As mais antigas são apagadas.</p>' + estado.noticias.map(n => htmlNoticia(n)).join('')
             : '<p class="vazio">Ainda não saiu nenhuma notícia. Sai mais ou menos uma por mês do jogo, e os resultados das empresas saem a cada 3 meses.</p>';
     }
     if (aba === 'aprenda') el.innerHTML = htmlAprenda();
